@@ -9,10 +9,12 @@ const exec = promisify(require('child_process').exec);
 export class ChatterboxService {
   private venvPath: string;
   private scriptPath: string;
+  private environmentSetupPromise: Promise<void>;
 
   constructor() {
     this.venvPath = path.join(os.homedir(), '.local-voice-mcp', 'venv');
     this.scriptPath = path.join(__dirname, '..', '..', 'scripts', 'tts_runner.py');
+    this.environmentSetupPromise = this.setupEnvironment();
   }
 
   async setupEnvironment(): Promise<void> {
@@ -54,18 +56,9 @@ export class ChatterboxService {
     }
   }
 
-  private environmentSetupPromise: Promise<void> | null = null;
-
-  private async initializeEnvironment(): Promise<void> {
-    if (!this.environmentSetupPromise) {
-      this.environmentSetupPromise = this.setupEnvironment();
-    }
-    return this.environmentSetupPromise;
-  }
-
   async synthesize(text: string, options: any): Promise<string> {
     try {
-      await this.initializeEnvironment();
+      await this.environmentSetupPromise;
     } catch (error) {
       console.error('Environment setup failed');
       throw new Error('TTS environment not ready');
@@ -77,11 +70,21 @@ export class ChatterboxService {
     }
     const outputFile = path.join(outputDir, `tts-${Date.now()}.wav`);
 
+    // Validate paths to prevent directory traversal
+    const validatePath = (filePath: string, baseDir: string) => {
+      const resolved = path.resolve(baseDir, filePath);
+      if (!resolved.startsWith(baseDir)) {
+        throw new Error(`Invalid path: ${filePath}`);
+      }
+      return resolved;
+    };
+
     const pythonPath = path.join(this.venvPath, 'bin', 'python');
     const sanitizeArg = (val: any): string => {
       if (typeof val === 'string') {
-        // More restrictive sanitization to prevent command injection
-        return val.replace(/[^a-zA-Z0-9_\-.,= ]/g, '');
+        // Strict sanitization to prevent command injection
+        // Only allow alphanumeric, spaces, and safe punctuation
+        return val.replace(/[^a-zA-Z0-9 _\-.,=:]/g, '');
       }
       return String(val);
     };
@@ -89,18 +92,22 @@ export class ChatterboxService {
     const args = [
       this.scriptPath,
       `--text=${sanitizeArg(text)}`,
-      `--output=${outputFile}`
+      `--output=${outputFile}`,
+      `--reference_audio=${sanitizeArg(options?.referenceAudio || '')}`,
+      `--exaggeration=${sanitizeArg(options?.exaggeration || 0.2)}`,
+      `--cfg_weight=${sanitizeArg(options?.cfg_weight || 1.0)}`
     ];
-
+    
     // Add reference audio if provided
     if (options?.referenceAudio) {
-      args.push(`--reference_audio=${sanitizeArg(options.referenceAudio)}`);
+      try {
+        const safePath = validatePath(options.referenceAudio, outputDir);
+        args.push(`--reference_audio=${safePath}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        throw new Error(`Invalid reference audio path: ${message}`);
+      }
     }
-
-    // Add other parameters
-    if (options?.pitch) args.push(`--pitch=${sanitizeArg(options.pitch)}`);
-    if (options?.speed) args.push(`--speed=${sanitizeArg(options.speed)}`);
-    if (options?.emotion) args.push(`--emotion=${sanitizeArg(options.emotion)}`);
 
     return new Promise((resolve, reject) => {
       console.log('Starting TTS synthesis');

@@ -29,8 +29,18 @@ async function testTTS() {
     response.data.pipe(writer);
 
     return new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
+      let finished = false;
+      writer.on('finish', () => {
+        finished = true;
+        resolve();
+      });
+      writer.on('error', (err) => {
+        if (finished) {
+          console.error('Error after finish:', err);
+        } else {
+          reject(err);
+        }
+      });
     });
   } catch (error) {
     if (error.response) {

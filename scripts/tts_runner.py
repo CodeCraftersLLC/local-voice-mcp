@@ -2,6 +2,8 @@ import argparse
 import logging
 import torch
 import torchaudio as ta
+import os
+import tempfile
 from chatterbox.tts import ChatterboxTTS
 
 # Set up logging
@@ -35,6 +37,13 @@ def main():
         return
     
     try:
+        # Validate output path is within temporary directory
+        temp_dir = tempfile.gettempdir()
+        output_abs = os.path.abspath(args.output)
+        if not output_abs.startswith(temp_dir):
+            logger.error(f"Output path {args.output} is not within temporary directory")
+            raise ValueError("Invalid output path")
+        
         # Detect available device
         device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")

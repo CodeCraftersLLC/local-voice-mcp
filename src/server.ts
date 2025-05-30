@@ -51,7 +51,16 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
       return;
     }
 
-    const audioPath = await chatterbox.synthesize(text, options);
+    let audioPath: string;
+    try {
+      audioPath = await chatterbox.synthesize(text, options);
+    } catch (error) {
+      console.error('TTS synthesis error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'TTS synthesis failed' });
+      }
+      return;
+    }
     
     // Validate audio path to prevent directory traversal
     const resolvedPath = path.resolve(audioPath);
@@ -83,20 +92,21 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
     audioStream.on('error', (err) => {
       console.error('Stream error:', err);
       
-      // Avoid sending headers if already sent
+      // Only send error response if headers haven't been sent
       if (!res.headersSent) {
         res.status(500).json({ error: 'Audio streaming failed' });
       }
+      // Otherwise, just end the response to avoid ERR_HTTP_HEADERS_SENT
+      else {
+        res.end();
+      }
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('TTS error:', error);
     
     // Avoid sending headers if already sent
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'TTS synthesis failed',
-        details: error.message
-      });
+      res.status(500).json({ error: 'TTS synthesis failed' });
     }
   }
 }
