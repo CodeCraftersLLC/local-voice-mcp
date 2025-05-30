@@ -26,16 +26,22 @@ export class ChatterboxService {
         if (stderr) console.error(stderr);
       }
 
-      // Install Chatterbox TTS
+      // Install PyTorch and TTS package
       const pipPath = path.join(this.venvPath, 'bin', 'pip');
-      console.log('Installing chatterbox-tts package...');
+      console.log('Installing PyTorch and TTS...');
       
-      const { stdout: installStdout, stderr: installStderr } = await exec(`${pipPath} install chatterbox-tts`);
-      console.log('Installation completed with status:');
-      if (installStdout) console.log(installStdout);
-      if (installStderr) console.error(installStderr);
+      const commands = [
+        `${pipPath} install torch torchaudio`,
+        `${pipPath} install TTS`
+      ];
       
-      console.log('chatterbox-tts installed successfully.');
+      for (const cmd of commands) {
+        const { stdout, stderr } = await exec(cmd);
+        if (stdout) console.log(stdout);
+        if (stderr) console.error(stderr);
+      }
+      
+      console.log('TTS dependencies installed successfully.');
       
       // Verify installation
       console.log('Verifying package installation...');
@@ -43,13 +49,27 @@ export class ChatterboxService {
       console.log('Installed packages:', listStdout);
       if (listStderr) console.error(listStderr);
     } catch (error) {
-      console.error('Error setting up environment:', error);
-      throw error;
+      console.error('Error setting up environment');
+      throw new Error('Environment setup failed');
     }
   }
 
-  async synthesize(text: string, voice: string, options: any): Promise<string> {
-    await this.setupEnvironment();
+  private environmentSetupPromise: Promise<void> | null = null;
+
+  private async initializeEnvironment(): Promise<void> {
+    if (!this.environmentSetupPromise) {
+      this.environmentSetupPromise = this.setupEnvironment();
+    }
+    return this.environmentSetupPromise;
+  }
+
+  async synthesize(text: string, options: any): Promise<string> {
+    try {
+      await this.initializeEnvironment();
+    } catch (error) {
+      console.error('Environment setup failed');
+      throw new Error('TTS environment not ready');
+    }
 
     const outputDir = path.join(os.tmpdir(), 'local-voice-mcp');
     if (!fs.existsSync(outputDir)) {
@@ -58,42 +78,59 @@ export class ChatterboxService {
     const outputFile = path.join(outputDir, `tts-${Date.now()}.wav`);
 
     const pythonPath = path.join(this.venvPath, 'bin', 'python');
+    const sanitizeArg = (val: any): string => {
+      if (typeof val === 'string') {
+        // More restrictive sanitization to prevent command injection
+        return val.replace(/[^a-zA-Z0-9_\-.,= ]/g, '');
+      }
+      return String(val);
+    };
+
     const args = [
       this.scriptPath,
-      `--text=${text}`,
-      `--voice=${voice}`,
+      `--text=${sanitizeArg(text)}`,
       `--output=${outputFile}`
     ];
 
-    if (options.pitch) args.push(`--pitch=${options.pitch}`);
-    if (options.speed) args.push(`--speed=${options.speed}`);
-    if (options.emotion) args.push(`--emotion=${options.emotion}`);
+    // Add reference audio if provided
+    if (options?.referenceAudio) {
+      args.push(`--reference_audio=${sanitizeArg(options.referenceAudio)}`);
+    }
+
+    // Add other parameters
+    if (options?.pitch) args.push(`--pitch=${sanitizeArg(options.pitch)}`);
+    if (options?.speed) args.push(`--speed=${sanitizeArg(options.speed)}`);
+    if (options?.emotion) args.push(`--emotion=${sanitizeArg(options.emotion)}`);
 
     return new Promise((resolve, reject) => {
-      console.log(`Starting TTS synthesis with voice: ${voice}`);
-      const command = `${pythonPath} ${args.join(' ')}`;
-      console.log(`Executing: ${command}`);
+      console.log('Starting TTS synthesis');
       
       const process = spawn(pythonPath, args);
-      
       console.log('TTS process started. Waiting for completion...');
 
       let stderrData = '';
       process.stderr.on('data', (data) => {
         stderrData += data.toString();
-        console.error(data.toString());
       });
 
+      const startTime = Date.now();
+      
       process.on('close', (code) => {
         if (code === 0 && fs.existsSync(outputFile)) {
+          const duration = Date.now() - startTime;
+          console.log(`TTS synthesis completed successfully in ${duration}ms`);
           resolve(outputFile);
         } else {
-          reject(new Error(`Chatterbox TTS failed: ${stderrData}`));
+          const duration = Date.now() - startTime;
+          console.error(`TTS synthesis failed after ${duration}ms with code ${code}`);
+          console.error('Error output:', stderrData);
+          reject(new Error(`TTS synthesis failed: ${stderrData}`));
         }
       });
 
       process.on('error', (err) => {
-        reject(new Error(`Chatterbox TTS error: ${err.message}`));
+        console.error('TTS process error');
+        reject(new Error('TTS process error'));
       });
     });
   }

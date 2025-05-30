@@ -22,15 +22,17 @@ def patch_torch_load(device):
 def main():
     parser = argparse.ArgumentParser(description='Chatterbox TTS Command Line')
     parser.add_argument('--text', type=str, required=True, help='Text to synthesize')
-    parser.add_argument('--voice', type=str, required=True, help='Voice model to use')
     parser.add_argument('--output', type=str, required=True, help='Output WAV file path')
-    parser.add_argument('--pitch', type=float, default=1.0, help='Pitch adjustment (0.5-2.0)')
-    parser.add_argument('--speed', type=float, default=1.0, help='Speed adjustment (0.5-2.0)')
-    parser.add_argument('--emotion', type=str, default='neutral', help='Emotion preset')
-    parser.add_argument('--exaggeration', type=float, default=2.0, help='Voice style exaggeration')
-    parser.add_argument('--cfg_weight', type=float, default=0.5, help='Configuration weight')
+    parser.add_argument('--reference_audio', type=str, help='Path to reference audio for voice cloning')
+    parser.add_argument('--exaggeration', type=float, default=0.2, help='Voice style exaggeration')
+    parser.add_argument('--cfg_weight', type=float, default=1.0, help='Configuration weight')
     
     args = parser.parse_args()
+    
+    # Validate input text
+    if not args.text.strip():
+        logger.error("Input text cannot be empty")
+        return
     
     try:
         # Detect available device
@@ -50,15 +52,24 @@ def main():
         
         # Generate speech with parameters
         logger.info('Generating speech...')
+        # Create parameters dictionary with only provided arguments
         wav = cb.generate(
             args.text,
+            audio_prompt_path=args.reference_audio,
             exaggeration=args.exaggeration,
             cfg_weight=args.cfg_weight
         )
         logger.info('Speech generation complete')
         
+        # Ensure audio tensor has correct dimensions [channels, samples]
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+        
         # Save to file
         logger.info(f'Saving audio to {args.output}')
+        # Ensure audio tensor has correct dimensions (channels, samples)
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
         ta.save(args.output, wav, cb.sr)
         
         logger.info('Audio saved successfully')
