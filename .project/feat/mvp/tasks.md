@@ -1,11 +1,11 @@
-# Local Voice MCP - Implementation Tasks (Coqui TTS)
+# Local Voice MCP - Implementation Tasks (Chatterbox TTS)
 
-## Milestone 1: Coqui Integration (2025-06-01 to 2025-06-07)
-- [ ] Research Coqui TTS architecture and Python integration
-- [ ] Set up Python environment with Coqui TTS
-- [ ] Implement model downloader with progress reporting
-- [ ] Design voice model cache system
-- [ ] Develop basic TTS pipeline integration
+## Milestone 1: Chatterbox Integration (2025-06-01 to 2025-06-05)
+- [ ] Research Chatterbox TTS architecture and licensing
+- [ ] Set up Python environment with Chatterbox
+- [ ] Implement voice model downloader
+- [ ] Design model caching system
+- [ ] Develop basic TTS integration
 
 ## Milestone 2: JSON API Server (2025-06-08 to 2025-06-12)
 - [ ] Set up HTTP server (Express.js)
@@ -27,12 +27,12 @@
 - [ ] Build voice model browser UI
 - [ ] Develop model versioning system
 
-## Milestone 4: Advanced Prosody (2025-06-18 to 2025-06-22)
-- [ ] Implement pitch/speed/volume controls
-- [ ] Develop emotion intensity adjustment
-- [ ] Create voice style blending system
-- [ ] Build emotion presets (happy, sad, angry, etc.)
-- [ ] Add real-time preview capability
+## Milestone 4: Prosody Control (2025-06-15 to 2025-06-19)
+- [ ] Implement pitch adjustment algorithm
+- [ ] Develop speed control mechanism
+- [ ] Create emotion presets system
+- [ ] Add word emphasis control
+- [ ] Implement real-time preview
 
 ## Milestone 5: Optimization (2025-06-23 to 2025-06-27)
 - [ ] Profile and optimize hot code paths

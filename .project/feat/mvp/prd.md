@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 **Problem**: Current cloud-based TTS solutions pose privacy risks, introduce latency, and limit user control over voice data.  
-**Solution**: Local voice generation using Coqui TTS to process audio directly on user devices.  
+**Solution**: Local voice generation using Chatterbox TTS to process audio directly on user devices.  
 **Key Benefits**:
 - **Privacy**: Zero data leaves the device
 - **Latency**: Optimized response times
@@ -12,7 +12,7 @@
 ```mermaid
 graph TD
     A[User Application\n(Cursor/Windsurf)] -->|Paste JSON| B[Local Voice MCP]
-    B --> C[Coqui TTS Engine]
+    B --> C[Chatterbox TTS Engine]
     C --> D[Audio Output]
     B --> E[Voice Model Cache]
     E --> C
@@ -21,49 +21,48 @@ graph TD
 ## 3. Features
 ### Core TTS
 - High-quality text-to-speech conversion
-- Support for 1000+ voices across 80+ languages
+- Support for 50+ voices across 20+ languages
 - Real-time streaming with low latency
 
 ### Voice Cloning
-- Fine-tune custom voice models
-- Create voices from 5-second samples
-- Voice style transfer capabilities
+- Create custom voices from 10-second samples
+- Voice style adaptation
+- Cross-lingual voice transfer
 
 ### Prosody Control
 - Pitch, speed and volume adjustment
-- Emotional tones with intensity levels
-- Voice style blending
+- Emotional tones (happy, sad, angry, etc.)
+- Emphasis control for specific words
 
 ### API
 - ElevenLabs-compatible JSON schema
 - Local HTTP server (localhost:59125)
-- Cross-platform Python-based interface
+- Simple Python-based interface
 
 ## 4. Technical Specifications
-### Coqui Integration
+### Chatterbox Integration
 - Python-based TTS engine
-- ONNX runtime for optimized performance
-- Advanced model management system
+- Optimized for low-latency streaming
+- Model quantization for efficiency
 
 ### JSON API Schema
 ```json
 {
   "text": "Hello world",
-  "voice": "tts_models/en/ljspeech/tacotron2-DDC",
+  "voice": "en_speaker_0",
   "options": {
-    "pitch": 1.2,
-    "speed": 1.0,
-    "emotion": "happy",
-    "emotion_strength": 0.8
+    "pitch": 1.1,
+    "speed": 1.2,
+    "emotion": "neutral"
   }
 }
 ```
 
 ### Performance Targets
-- <200ms latency for short texts
-- <10% CPU usage on Apple M1
+- <100ms latency for short texts
+- <8% CPU usage on Apple M1
+- <300MB memory footprint
 - GPU acceleration support
-- <500MB memory footprint
 
 ## 5. Development Roadmap
 ```mermaid
@@ -71,14 +70,14 @@ gantt
     title Development Timeline
     dateFormat  YYYY-MM-DD
     section Core
-    Coqui Integration       :2025-06-01, 7d
-    JSON API Server         :2025-06-08, 5d
+    Chatterbox Integration  :2025-06-01, 5d
+    JSON API Server         :2025-06-06, 4d
     section Voice Management
     Model Caching           :2025-06-10, 3d
     Voice Cloning UI        :2025-06-13, 5d
     section Optimization
-    Latency Tuning          :2025-06-15, 5d
-    Cross-platform Testing  :2025-06-20, 3d
+    Latency Tuning          :2025-06-15, 4d
+    Cross-platform Testing  :2025-06-19, 3d
 ```
 
 ## 6. Security Considerations

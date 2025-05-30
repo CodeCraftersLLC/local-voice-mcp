@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import bodyParser from 'body-parser';
 import fs from 'fs';
-import { CoquiService } from './core/coqui.service';
+import { ChatterboxService } from './core/chatterbox.service';
 
 interface TTSRequest {
   text: string;
@@ -16,20 +16,20 @@ interface TTSRequest {
 
 const app = express();
 const port = 59125;
-const coqui = new CoquiService();
+const chatterbox = new ChatterboxService();
 
 app.use(bodyParser.json());
 
 async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
   try {
-    const { text, voice = 'tts_models/en/ljspeech/tacotron2-DDC', options = {} } = req.body;
+    const { text, voice = 'en_speaker_0', options = {} } = req.body;
 
     if (!text) {
       res.status(400).json({ error: 'Text parameter is required' });
       return;
     }
 
-    const audioPath = await coqui.synthesize(text, voice, options);
+    const audioPath = await chatterbox.synthesize(text, voice, options);
     
     res.setHeader('Content-Type', 'audio/wav');
     res.setHeader('Content-Disposition', 'attachment; filename=tts.wav');
