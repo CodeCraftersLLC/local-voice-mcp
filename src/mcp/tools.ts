@@ -361,7 +361,8 @@ export class TTSTools {
         args = [audioFile];
       } else if (process.platform === "win32") {
         // Windows - sanitize audioFile to prevent command injection
-        const sanitizedAudioFile = audioFile.replace(/[`'"\\]/g, "");
+        // Preserve backslashes for Windows paths but remove other dangerous characters
+        const sanitizedAudioFile = audioFile.replace(/[`'"\n\r]/g, "");
         command = "powershell";
         args = [
           "-c",
@@ -370,12 +371,13 @@ export class TTSTools {
       } else {
         // Linux
         const ext = path.extname(audioFile).toLowerCase();
+        const safeAudioFile = audioFile.replace(/[`'"\\$]/g, "");
         if (ext === ".mp3") {
           command = "mpg123";
-          args = [audioFile];
+          args = [safeAudioFile];
         } else {
           command = "aplay";
-          args = [audioFile];
+          args = [safeAudioFile];
         }
       }
 

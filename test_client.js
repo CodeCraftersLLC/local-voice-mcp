@@ -62,7 +62,7 @@ async function testTTS() {
         const errorBody = JSON.parse(error.response.data);
         console.error("Error details:", errorBody);
       } catch (e) {
-        console.error("Response data:", error.response.data);
+        console.error("Response data:", e.response ? e.response.data : e);
       }
     } else if (error.request) {
       // The request was made but no response was received

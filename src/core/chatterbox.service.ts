@@ -136,6 +136,10 @@ export class ChatterboxService {
       if (strVal.length === 0 && allowEmpty) {
         return strVal;
       }
+      // Prevent argument injection via double dashes
+      if (strVal.includes("--")) {
+        throw new Error("Argument cannot contain double dashes");
+      }
       // Strict validation to prevent command injection
       // Allow alphanumeric, spaces, safe punctuation, and forward slashes for file paths
       if (/^[a-zA-Z0-9 _\-.,=:\/]*$/.test(strVal)) {

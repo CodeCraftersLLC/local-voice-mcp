@@ -36,6 +36,19 @@ const formatLogArgs = (args: any[]): string => {
 };
 
 const createLogEntry = (level: string, message: string, ...args: any[]) => {
+  const redact = (obj: any) => {
+    if (typeof obj === "object" && obj !== null) {
+      const clone = { ...obj };
+      for (const key of Object.keys(clone)) {
+        if (/passw(or)?d|token|secret|api[_-]?key|authorization|auth/i.test(key)) {
+          clone[key] = "[REDACTED]";
+        }
+      }
+      return clone;
+    }
+    return obj;
+  };
+
   const logEntry = {
     timestamp: new Date().toISOString(),
     level: level.toUpperCase(),
@@ -46,11 +59,11 @@ const createLogEntry = (level: string, message: string, ...args: any[]) => {
           return {
             name: arg.name,
             message: arg.message,
-            stack: arg.stack,
+            // Do not log stack traces to avoid leaking sensitive info
           };
         } else if (typeof arg === "object" && arg !== null) {
           try {
-            return arg;
+            return redact(arg);
           } catch (e) {
             return String(arg);
           }
