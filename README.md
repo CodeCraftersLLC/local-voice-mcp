@@ -4,6 +4,8 @@ Give your MCP clients the ability to speak by running local voice models using C
 
 ## Quickstart
 
+Note: the env variables are optional
+
 ```json
 {
   "mcpServers": {
