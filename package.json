@@ -1,5 +1,5 @@
 {
-  "name": "@codecrafters/local-voice-mcp",
+  "name": "@codecraftersllc/local-voice-mcp",
   "version": "0.1.0",
   "main": "dist/server.js",
   "bin": {

@@ -9,7 +9,7 @@ Give your MCP clients the ability to speak by running local voice models using C
   "mcpServers": {
     "local-voice-mcp": {
       "command": "npx",
-      "args": ["-y", "@codecrafters/local-voice-mcp"],
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
         "CHATTERBOX_REFERENCE_AUDIO": "/TODO",
         "CHATTERBOX_EXAGGERATION": "0.5",
@@ -258,7 +258,7 @@ These environment variables can be used to set default values for TTS synthesis.
 
 ```bash
 # Set default TTS parameters via environment variables
-export CHATTERBOX_REFERENCE_AUDIO="./node_modules/@codecrafters/local-voice-mcp/female-reference-voice.wav"
+export CHATTERBOX_REFERENCE_AUDIO="./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav"
 export CHATTERBOX_EXAGGERATION="0.5"
 export CHATTERBOX_CFG_WEIGHT="1.2"
 
@@ -273,9 +273,9 @@ local-voice-mcp-server
   "mcpServers": {
     "local-voice-mcp": {
       "command": "npx",
-      "args": ["-y", "@codecrafters/local-voice-mcp"],
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
-        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecrafters/local-voice-mcp/female-reference-voice.wav",
+        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2"
       }
