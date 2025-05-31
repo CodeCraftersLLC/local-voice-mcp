@@ -54,6 +54,21 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
       return;
     }
 
+    // Check character limit to prevent creating wav files that are too large
+    const maxCharacters = parseInt(
+      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
+      10
+    );
+    if (text.length > maxCharacters) {
+      res.status(400).json({
+        error: "Text too long",
+        message: `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${text.length}`,
+        maxCharacters,
+        currentLength: text.length,
+      });
+      return;
+    }
+
     // This call might throw, or return a path
     audioPath = await chatterbox.synthesize(text, options);
 

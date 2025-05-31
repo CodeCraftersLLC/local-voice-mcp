@@ -67,6 +67,34 @@ export class TTSTools {
       };
     }
 
+    // Check character limit to prevent creating wav files that are too large
+    const maxCharacters = parseInt(
+      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
+      10
+    );
+    if (text.length > maxCharacters) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                success: false,
+                error: "Text too long",
+                message: `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${text.length}`,
+                maxCharacters,
+                currentLength: text.length,
+                timestamp: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
     try {
       const audioPath = await this.chatterbox.synthesize(text, {
         referenceAudio,

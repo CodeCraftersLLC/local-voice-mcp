@@ -81,6 +81,17 @@ export class ChatterboxService {
       throw new Error("Text parameter is required and cannot be empty");
     }
 
+    // Check character limit to prevent creating wav files that are too large
+    const maxCharacters = parseInt(
+      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
+      10
+    );
+    if (text.length > maxCharacters) {
+      throw new Error(
+        `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${text.length}`
+      );
+    }
+
     try {
       await this.environmentSetupPromise;
     } catch (error) {

@@ -13,7 +13,8 @@ Give your MCP clients the ability to speak by running local voice models using C
       "env": {
         "CHATTERBOX_REFERENCE_AUDIO": "/TODO",
         "CHATTERBOX_EXAGGERATION": "0.5",
-        "CHATTERBOX_CFG_WEIGHT": "1.2"
+        "CHATTERBOX_CFG_WEIGHT": "1.2",
+        "CHATTERBOX_MAX_CHARACTERS": "2000"
       }
     }
   }
@@ -253,6 +254,7 @@ These environment variables can be used to set default values for TTS synthesis.
 - `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (default: empty)
 - `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
 - `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
+- `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
 
 **Example:**
 
@@ -261,6 +263,7 @@ These environment variables can be used to set default values for TTS synthesis.
 export CHATTERBOX_REFERENCE_AUDIO="./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav"
 export CHATTERBOX_EXAGGERATION="0.5"
 export CHATTERBOX_CFG_WEIGHT="1.2"
+export CHATTERBOX_MAX_CHARACTERS="3000"
 
 # Run the MCP server with these defaults
 local-voice-mcp-server
@@ -277,7 +280,8 @@ local-voice-mcp-server
       "env": {
         "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
-        "CHATTERBOX_CFG_WEIGHT": "1.2"
+        "CHATTERBOX_CFG_WEIGHT": "1.2",
+        "CHATTERBOX_MAX_CHARACTERS": "3000"
       }
     }
   }

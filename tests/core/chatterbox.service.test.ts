@@ -79,6 +79,7 @@ describe("ChatterboxService", () => {
       delete process.env.CHATTERBOX_REFERENCE_AUDIO;
       delete process.env.CHATTERBOX_EXAGGERATION;
       delete process.env.CHATTERBOX_CFG_WEIGHT;
+      delete process.env.CHATTERBOX_MAX_CHARACTERS;
     });
 
     afterEach(() => {
@@ -86,6 +87,7 @@ describe("ChatterboxService", () => {
       delete process.env.CHATTERBOX_REFERENCE_AUDIO;
       delete process.env.CHATTERBOX_EXAGGERATION;
       delete process.env.CHATTERBOX_CFG_WEIGHT;
+      delete process.env.CHATTERBOX_MAX_CHARACTERS;
     });
 
     it("should synthesize text successfully", async () => {
@@ -168,6 +170,63 @@ describe("ChatterboxService", () => {
 
     it("should reject empty text input", async () => {
       await expect(chatterboxService.synthesize("", {})).rejects.toThrow();
+    });
+
+    it("should reject text that exceeds default character limit", async () => {
+      const longText = "a".repeat(2001); // Exceeds default limit of 2000
+      await expect(chatterboxService.synthesize(longText, {})).rejects.toThrow(
+        "Text exceeds maximum character limit of 2000 characters. Current length: 2001"
+      );
+    });
+
+    it("should accept text within default character limit", async () => {
+      const validText = "a".repeat(2000); // Exactly at default limit of 2000
+
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+      mockFs.existsSync.mockReturnValue(true);
+
+      const result = await chatterboxService.synthesize(validText, {});
+      expect(result).toContain("tts-");
+      expect(result).toContain(".wav");
+    });
+
+    it("should respect custom character limit from environment variable", async () => {
+      process.env.CHATTERBOX_MAX_CHARACTERS = "100";
+
+      const longText = "a".repeat(101); // Exceeds custom limit of 100
+      await expect(chatterboxService.synthesize(longText, {})).rejects.toThrow(
+        "Text exceeds maximum character limit of 100 characters. Current length: 101"
+      );
+    });
+
+    it("should accept text within custom character limit", async () => {
+      process.env.CHATTERBOX_MAX_CHARACTERS = "100";
+      const validText = "a".repeat(100); // Exactly at custom limit of 100
+
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+      mockFs.existsSync.mockReturnValue(true);
+
+      const result = await chatterboxService.synthesize(validText, {});
+      expect(result).toContain("tts-");
+      expect(result).toContain(".wav");
     });
 
     it("should use environment variables as defaults", async () => {
