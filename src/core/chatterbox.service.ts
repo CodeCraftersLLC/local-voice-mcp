@@ -96,19 +96,47 @@ export class ChatterboxService {
 
     // Validate paths to prevent directory traversal
     const validatePath = (filePath: string, baseDir: string) => {
-      const resolved = path.resolve(baseDir, filePath);
-      if (!resolved.startsWith(baseDir)) {
-        throw new Error(`Invalid path: ${filePath}`);
+      try {
+        const resolved = path.resolve(baseDir, filePath);
+        const realResolved = fs.realpathSync(resolved);
+        const realBase = fs.realpathSync(baseDir);
+
+        // Use both startswith and relative path checking for robust validation
+        if (!realResolved.startsWith(realBase + path.sep)) {
+          throw new Error(`Invalid path: ${filePath}`);
+        }
+
+        // Additional check using relative path
+        const relativePath = path.relative(realBase, realResolved);
+        if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+          throw new Error(`Invalid path: ${filePath}`);
+        }
+
+        return realResolved;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("Invalid path")) {
+          throw error;
+        }
+        // If realpath fails (file doesn't exist), fall back to resolve-only validation
+        const resolved = path.resolve(baseDir, filePath);
+        const normalizedBase = path.resolve(baseDir) + path.sep;
+        if (!resolved.startsWith(normalizedBase)) {
+          throw new Error(`Invalid path: ${filePath}`);
+        }
+        return resolved;
       }
-      return resolved;
     };
 
     const pythonPath = path.join(this.venvPath, "bin", "python");
     const sanitizeArg = (val: any): string => {
       if (typeof val === "string") {
-        // Strict sanitization to prevent command injection
+        // Strict validation to prevent command injection
         // Only allow alphanumeric, spaces, and safe punctuation
-        return val.replace(/[^a-zA-Z0-9 _\-.,=:]/g, "");
+        if (/^[a-zA-Z0-9 _\-.,=:]*$/.test(val)) {
+          return val;
+        } else {
+          throw new Error(`Invalid characters in argument: ${val}`);
+        }
       }
       return String(val);
     };
