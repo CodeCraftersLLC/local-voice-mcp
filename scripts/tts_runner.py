@@ -42,10 +42,15 @@ def main():
         output_real = os.path.realpath(args.output)
         temp_real = os.path.realpath(temp_dir)
 
-        # Use both startswith and commonpath for robust validation
+        # Check that output is strictly within temp dir and not a symlink
         if not output_real.startswith(temp_real + os.sep):
             logger.error(f"Output path {args.output} is not strictly within temporary directory")
             raise ValueError("Invalid output path")
+
+        # Prevent symlink attacks: ensure output is not a symlink
+        if os.path.islink(args.output):
+            logger.error(f"Output path {args.output} is a symlink, which is not allowed")
+            raise ValueError("Output path cannot be a symlink")
 
         try:
             if os.path.commonpath([output_real, temp_real]) != temp_real:

@@ -105,51 +105,44 @@ export class ChatterboxService {
     }
     const outputFile = path.join(outputDir, `tts-${Date.now()}.wav`);
 
-    // Validate paths to prevent directory traversal
-    const validatePath = (filePath: string, baseDir: string) => {
-      try {
-        const resolved = path.resolve(baseDir, filePath);
-        const realResolved = fs.realpathSync(resolved);
-        const realBase = fs.realpathSync(baseDir);
+    const pythonPath = path.join(this.venvPath, "bin", "python");
 
-        // Use both startswith and relative path checking for robust validation
-        if (!realResolved.startsWith(realBase + path.sep)) {
-          throw new Error(`Invalid path: ${filePath}`);
-        }
-
-        // Additional check using relative path
-        const relativePath = path.relative(realBase, realResolved);
-        if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-          throw new Error(`Invalid path: ${filePath}`);
-        }
-
-        return realResolved;
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("Invalid path")) {
-          throw error;
-        }
-        // If realpath fails (file doesn't exist), fall back to resolve-only validation
-        const resolved = path.resolve(baseDir, filePath);
-        const normalizedBase = path.resolve(baseDir) + path.sep;
-        if (!resolved.startsWith(normalizedBase)) {
-          throw new Error(`Invalid path: ${filePath}`);
-        }
-        return resolved;
+    const sanitizeTextArg = (val: any): string => {
+      if (typeof val !== "string") {
+        throw new Error("Text argument must be a string");
       }
+      const strVal = String(val);
+      if (strVal.length === 0) {
+        throw new Error("Text cannot be empty");
+      }
+      if (strVal.length > 2000) {
+        throw new Error("Text must be less than 2000 characters");
+      }
+      return strVal;
     };
 
-    const pythonPath = path.join(this.venvPath, "bin", "python");
-    const sanitizeArg = (val: any): string => {
-      if (typeof val === "string") {
-        // Strict validation to prevent command injection
-        // Allow alphanumeric, spaces, safe punctuation, and forward slashes for file paths
-        if (/^[a-zA-Z0-9 _\-.,=:\/]*$/.test(val)) {
-          return val;
-        } else {
-          throw new Error(`Invalid characters in argument: ${val}`);
-        }
+    const sanitizeArg = (val: any, allowEmpty: boolean = false): string => {
+      if (typeof val !== "string" && typeof val !== "number") {
+        throw new Error("Argument must be a string or number");
       }
-      return String(val);
+      const strVal = String(val);
+      if (!allowEmpty && strVal.length === 0) {
+        throw new Error("Argument cannot be empty");
+      }
+      if (strVal.length > 256) {
+        throw new Error("Argument must be less than 256 characters");
+      }
+      // Allow empty strings when allowEmpty is true
+      if (strVal.length === 0 && allowEmpty) {
+        return strVal;
+      }
+      // Strict validation to prevent command injection
+      // Allow alphanumeric, spaces, safe punctuation, and forward slashes for file paths
+      if (/^[a-zA-Z0-9 _\-.,=:\/]*$/.test(strVal)) {
+        return strVal;
+      } else {
+        throw new Error("Invalid characters in argument");
+      }
     };
 
     // Get values from environment variables, options, or defaults
@@ -168,57 +161,123 @@ export class ChatterboxService {
         : 1.0);
 
     // Validate reference audio path if provided
-    let validatedReferenceAudio = referenceAudio;
+    let validatedReferenceAudio = "";
     if (referenceAudio) {
       try {
-        validatedReferenceAudio = validatePath(referenceAudio, outputDir);
+        // For reference audio, we allow absolute paths but validate the file exists and is readable
+        const resolvedPath = path.resolve(referenceAudio);
+
+        // Check if file exists
+        if (!fs.existsSync(resolvedPath)) {
+          logger.warn(
+            `Reference audio file does not exist: ${resolvedPath}. Using default voice instead.`
+          );
+          validatedReferenceAudio = "";
+        } else {
+          // Check if it's a file (not a directory)
+          const stats = fs.statSync(resolvedPath);
+          if (!stats.isFile()) {
+            logger.warn(
+              `Reference audio path is not a file: ${resolvedPath}. Using default voice instead.`
+            );
+            validatedReferenceAudio = "";
+          } else {
+            // Basic security check - ensure it's not trying to access system files
+            // Allow common audio file extensions
+            const ext = path.extname(resolvedPath).toLowerCase();
+            const allowedExtensions = [
+              ".wav",
+              ".mp3",
+              ".flac",
+              ".ogg",
+              ".m4a",
+              ".aac",
+            ];
+            if (!allowedExtensions.includes(ext)) {
+              logger.warn(
+                `Unsupported audio file format: ${ext}. Supported formats: ${allowedExtensions.join(
+                  ", "
+                )}. Using default voice instead.`
+              );
+              validatedReferenceAudio = "";
+            } else {
+              validatedReferenceAudio = resolvedPath;
+              logger.log(`Using reference audio file: ${resolvedPath}`);
+            }
+          }
+        }
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown error";
-        throw new Error(`Invalid reference audio path: ${message}`);
+        logger.warn(
+          `Error validating reference audio path: ${message}. Using default voice instead.`
+        );
+        validatedReferenceAudio = "";
       }
     }
 
     const args = [
       this.scriptPath,
-      `--text=${sanitizeArg(text)}`,
+      `--text=${sanitizeTextArg(text)}`,
       `--output=${outputFile}`,
-      `--reference_audio=${sanitizeArg(validatedReferenceAudio)}`,
+      `--reference_audio=${sanitizeArg(validatedReferenceAudio, true)}`, // Allow empty for optional parameter
       `--exaggeration=${sanitizeArg(exaggeration)}`,
       `--cfg_weight=${sanitizeArg(cfgWeight)}`,
     ];
 
     return new Promise((resolve, reject) => {
       logger.log("Starting TTS synthesis");
+      logger.log("Python path:", pythonPath);
+      logger.log("Script path:", this.scriptPath);
+      logger.log("Arguments:", args);
 
       const process = spawn(pythonPath, args);
       logger.log("TTS process started. Waiting for completion...");
 
       let stderrData = "";
+      let stdoutData = "";
+
       process.stderr.on("data", (data) => {
-        stderrData += data.toString();
+        const chunk = data.toString();
+        stderrData += chunk;
+        logger.log("TTS stderr:", chunk.trim());
+      });
+
+      process.stdout.on("data", (data) => {
+        const chunk = data.toString();
+        stdoutData += chunk;
+        logger.log("TTS stdout:", chunk.trim());
       });
 
       const startTime = Date.now();
 
       process.on("close", (code) => {
+        const duration = Date.now() - startTime;
+        logger.log(`TTS process closed with code ${code} after ${duration}ms`);
+
         if (code === 0 && fs.existsSync(outputFile)) {
-          const duration = Date.now() - startTime;
           logger.log(`TTS synthesis completed successfully in ${duration}ms`);
+          logger.log("Output file exists:", outputFile);
           resolve(outputFile);
         } else {
-          const duration = Date.now() - startTime;
           logger.error(
             `TTS synthesis failed after ${duration}ms with code ${code}`
           );
-          logger.error("Error output:", stderrData);
-          reject(new Error(`TTS synthesis failed: ${stderrData}`));
+          logger.error("Error output (stderr):", stderrData);
+          logger.error("Standard output (stdout):", stdoutData);
+          logger.error("Output file exists:", fs.existsSync(outputFile));
+
+          const errorMessage =
+            stderrData.trim() ||
+            stdoutData.trim() ||
+            `Process exited with code ${code}`;
+          reject(new Error(`TTS synthesis failed: ${errorMessage}`));
         }
       });
 
       process.on("error", (err) => {
-        logger.error("TTS process error");
-        reject(new Error("TTS process error"));
+        logger.error("TTS process error:", err);
+        reject(new Error(`TTS process error: ${err.message}`));
       });
     });
   }

@@ -11,7 +11,7 @@ Give your MCP clients the ability to speak by running local voice models using C
       "command": "npx",
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
-        "CHATTERBOX_REFERENCE_AUDIO": "/TODO",
+        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "2000"

@@ -30,15 +30,23 @@ async function testTTS() {
 
     return new Promise((resolve, reject) => {
       let finished = false;
-      writer.on("finish", () => {
+
+      const cleanup = () => {
         if (!finished) {
           finished = true;
+          return true;
+        }
+        return false;
+      };
+
+      writer.on("finish", () => {
+        if (cleanup()) {
           resolve();
         }
       });
+
       writer.on("error", (err) => {
-        if (!finished) {
-          finished = true;
+        if (cleanup()) {
           reject(err);
         } else {
           console.error("Error after finish:", err);

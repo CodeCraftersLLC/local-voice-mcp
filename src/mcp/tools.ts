@@ -46,7 +46,29 @@ export class TTSTools {
       cfg_weight = 1.0,
     } = params;
 
-    if (!text || text.trim().length === 0) {
+    // Validate referenceAudio parameter if provided
+    if (referenceAudio && !/^[\w\-.\\/\\]+$/.test(referenceAudio)) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                success: false,
+                error: "Invalid input",
+                message: "Reference audio path contains invalid characters",
+                timestamp: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
       return {
         content: [
           {
@@ -72,7 +94,7 @@ export class TTSTools {
       process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
       10
     );
-    if (text.length > maxCharacters) {
+    if (text && text.length > maxCharacters) {
       return {
         content: [
           {
@@ -85,6 +107,11 @@ export class TTSTools {
                 maxCharacters,
                 currentLength: text.length,
                 timestamp: new Date().toISOString(),
+                // Sanitize text to prevent log injection or information disclosure
+                sanitizedInput:
+                  typeof text === "string"
+                    ? text.replace(/[\r\n\t]/g, " ").substring(0, 100)
+                    : "",
               },
               null,
               2
@@ -295,15 +322,11 @@ export class TTSTools {
         };
       }
 
-      // Security: Ensure the file is within allowed directories
+      // Security: Ensure the file is within temp directory only (principle of least privilege)
       const resolvedPath = path.resolve(audioFile);
       const tempDir = path.resolve(TEMP_AUDIO_DIR);
-      const homeDir = path.resolve(os.homedir());
 
-      if (
-        !resolvedPath.startsWith(tempDir) &&
-        !resolvedPath.startsWith(homeDir)
-      ) {
+      if (!resolvedPath.startsWith(tempDir + path.sep)) {
         return {
           content: [
             {
@@ -313,7 +336,8 @@ export class TTSTools {
                   success: false,
                   error: "Access denied",
                   message:
-                    "Audio file must be in temp directory or user home directory",
+                    "Audio file must be in the temporary directory for security reasons",
+                  allowedDirectory: TEMP_AUDIO_DIR,
                   timestamp: new Date().toISOString(),
                 },
                 null,
@@ -336,16 +360,23 @@ export class TTSTools {
         command = "afplay";
         args = [audioFile];
       } else if (process.platform === "win32") {
-        // Windows
+        // Windows - sanitize audioFile to prevent command injection
+        const sanitizedAudioFile = audioFile.replace(/[`'"\\]/g, "");
         command = "powershell";
         args = [
           "-c",
-          `(New-Object Media.SoundPlayer '${audioFile}').PlaySync()`,
+          `(New-Object Media.SoundPlayer "${sanitizedAudioFile}").PlaySync()`,
         ];
       } else {
         // Linux
-        command = "aplay";
-        args = [audioFile];
+        const ext = path.extname(audioFile).toLowerCase();
+        if (ext === ".mp3") {
+          command = "mpg123";
+          args = [audioFile];
+        } else {
+          command = "aplay";
+          args = [audioFile];
+        }
       }
 
       return new Promise((resolve) => {
@@ -446,7 +477,150 @@ export class TTSTools {
   }
 }
 
-// Schema definitions for MCP tools
+/**
+ * Execute tool and handle errors
+ * @param toolName - Name of the tool to execute
+ * @param args - Arguments for the tool
+ * @param ttsTools - TTSTools instance
+ * @returns Tool execution result
+ */
+export async function executeToolAndHandleErrors(
+  toolName: string,
+  args: any,
+  ttsTools: TTSTools
+): Promise<any> {
+  try {
+    switch (toolName) {
+      case "synthesize_text":
+        return await ttsTools.synthesizeText(args);
+      case "play_audio":
+        return await ttsTools.playAudio(args);
+      case "tts_status":
+        return await ttsTools.getStatus();
+      default:
+        throw new Error(`Unknown tool: ${toolName}`);
+    }
+  } catch (error) {
+    // Return error in the expected format
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              success: false,
+              error: "Tool execution failed",
+              message: error instanceof Error ? error.message : "Unknown error",
+              tool: toolName,
+              timestamp: new Date().toISOString(),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+// Tool type definition
+export interface Tool {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: "object";
+    properties: Record<string, any>;
+    required?: string[];
+  };
+}
+
+/**
+ * Synthesize Text Tool
+ * @param {object} args - A JSON object containing the arguments
+ * @see {synthesizeTextToolExecutor}
+ */
+const synthesizeTextTool: Tool = {
+  name: "synthesize_text",
+  description:
+    "Convert text to speech with optional voice cloning using reference audio. Supports prosody controls for exaggeration and configuration weight.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description:
+          "The text to convert to speech. Must be non-empty and under the character limit.",
+      },
+      referenceAudio: {
+        type: "string",
+        description: "Optional path to reference audio file for voice cloning.",
+      },
+      exaggeration: {
+        type: "number",
+        description:
+          "Voice style exaggeration level (0.0 to 2.0, default: 0.2).",
+        minimum: 0,
+        maximum: 2,
+      },
+      cfg_weight: {
+        type: "number",
+        description:
+          "Configuration weight for TTS model (0.0 to 5.0, default: 1.0).",
+        minimum: 0,
+        maximum: 5,
+      },
+    },
+    required: ["text"],
+  },
+};
+
+/**
+ * Play Audio Tool
+ * @param {object} args - A JSON object containing the arguments
+ * @see {playAudioToolExecutor}
+ */
+const playAudioTool: Tool = {
+  name: "play_audio",
+  description:
+    "Play an audio file using the system's default audio player. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      audioFile: {
+        type: "string",
+        description:
+          "Path to the audio file to play. Must be a .wav or .mp3 file in the temporary directory.",
+      },
+    },
+    required: ["audioFile"],
+  },
+};
+
+/**
+ * TTS Status Tool
+ * @param {object} args - A JSON object containing the arguments
+ * @see {ttsStatusToolExecutor}
+ */
+const ttsStatusTool: Tool = {
+  name: "tts_status",
+  description:
+    "Get the current status of the TTS service, including operational state and capabilities.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
+};
+
+// Export all tools as an array
+export const ALL_TOOLS: Tool[] = [
+  synthesizeTextTool,
+  playAudioTool,
+  ttsStatusTool,
+];
+
+// Schema definitions for validation (keeping for backward compatibility)
 export const TTSToolSchemas = {
   synthesizeText: {
     text: z.string().min(1, "Text cannot be empty"),
