@@ -2,6 +2,24 @@
 
 Give your MCP clients the ability to speak by running local voice models using Chatterbox TTS.
 
+## Quickstart
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecrafters/local-voice-mcp"],
+      "env": {
+        "CHATTERBOX_REFERENCE_AUDIO": "/TODO",
+        "CHATTERBOX_EXAGGERATION": "0.5",
+        "CHATTERBOX_CFG_WEIGHT": "1.2"
+      }
+    }
+  }
+}
+```
+
 ## Features
 
 - **MCP Server Implementation**: Full Model Context Protocol server using `@modelcontextprotocol/sdk`
@@ -223,8 +241,54 @@ ElevenLabs-compatible text-to-speech endpoint.
 
 ### Environment Variables
 
+#### Server Configuration
+
 - `PORT`: HTTP server port (default: 59125)
 - `MCP_MODE`: Operation mode - "mcp" or "http" (default: "mcp")
+
+#### TTS Configuration
+
+These environment variables can be used to set default values for TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
+
+- `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (default: empty)
+- `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
+- `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
+
+**Example:**
+
+```bash
+# Set default TTS parameters via environment variables
+export CHATTERBOX_REFERENCE_AUDIO="./node_modules/@codecrafters/local-voice-mcp/female-reference-voice.wav"
+export CHATTERBOX_EXAGGERATION="0.5"
+export CHATTERBOX_CFG_WEIGHT="1.2"
+
+# Run the MCP server with these defaults
+local-voice-mcp-server
+```
+
+**Using with npx:**
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecrafters/local-voice-mcp"],
+      "env": {
+        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecrafters/local-voice-mcp/female-reference-voice.wav",
+        "CHATTERBOX_EXAGGERATION": "0.5",
+        "CHATTERBOX_CFG_WEIGHT": "1.2"
+      }
+    }
+  }
+}
+```
+
+**Priority Order:**
+
+1. Options passed to the `synthesize_text` tool (highest priority)
+2. Environment variables
+3. Built-in defaults (lowest priority)
 
 ### MCP Client Configuration
 

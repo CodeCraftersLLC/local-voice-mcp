@@ -131,8 +131,8 @@ export class ChatterboxService {
     const sanitizeArg = (val: any): string => {
       if (typeof val === "string") {
         // Strict validation to prevent command injection
-        // Only allow alphanumeric, spaces, and safe punctuation
-        if (/^[a-zA-Z0-9 _\-.,=:]*$/.test(val)) {
+        // Allow alphanumeric, spaces, safe punctuation, and forward slashes for file paths
+        if (/^[a-zA-Z0-9 _\-.,=:\/]*$/.test(val)) {
           return val;
         } else {
           throw new Error(`Invalid characters in argument: ${val}`);
@@ -141,26 +141,41 @@ export class ChatterboxService {
       return String(val);
     };
 
-    const args = [
-      this.scriptPath,
-      `--text=${sanitizeArg(text)}`,
-      `--output=${outputFile}`,
-      `--reference_audio=${sanitizeArg(options?.referenceAudio || "")}`,
-      `--exaggeration=${sanitizeArg(options?.exaggeration || 0.2)}`,
-      `--cfg_weight=${sanitizeArg(options?.cfg_weight || 1.0)}`,
-    ];
+    // Get values from environment variables, options, or defaults
+    // Options take precedence over environment variables
+    const referenceAudio =
+      options?.referenceAudio || process.env.CHATTERBOX_REFERENCE_AUDIO || "";
+    const exaggeration =
+      options?.exaggeration ??
+      (process.env.CHATTERBOX_EXAGGERATION
+        ? parseFloat(process.env.CHATTERBOX_EXAGGERATION)
+        : 0.2);
+    const cfgWeight =
+      options?.cfg_weight ??
+      (process.env.CHATTERBOX_CFG_WEIGHT
+        ? parseFloat(process.env.CHATTERBOX_CFG_WEIGHT)
+        : 1.0);
 
-    // Add reference audio if provided
-    if (options?.referenceAudio) {
+    // Validate reference audio path if provided
+    let validatedReferenceAudio = referenceAudio;
+    if (referenceAudio) {
       try {
-        const safePath = validatePath(options.referenceAudio, outputDir);
-        args.push(`--reference_audio=${safePath}`);
+        validatedReferenceAudio = validatePath(referenceAudio, outputDir);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown error";
         throw new Error(`Invalid reference audio path: ${message}`);
       }
     }
+
+    const args = [
+      this.scriptPath,
+      `--text=${sanitizeArg(text)}`,
+      `--output=${outputFile}`,
+      `--reference_audio=${sanitizeArg(validatedReferenceAudio)}`,
+      `--exaggeration=${sanitizeArg(exaggeration)}`,
+      `--cfg_weight=${sanitizeArg(cfgWeight)}`,
+    ];
 
     return new Promise((resolve, reject) => {
       logger.log("Starting TTS synthesis");

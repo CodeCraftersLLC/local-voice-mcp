@@ -1,18 +1,29 @@
 {
-  "name": "local-voice-mcp",
+  "name": "@codecrafters/local-voice-mcp",
   "version": "0.1.0",
   "main": "dist/server.js",
   "bin": {
     "local-voice-mcp-server": "./dist/mcp-server.js"
   },
   "author": "soyboyscout",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodeCraftersLLC/local-voice-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CodeCraftersLLC/local-voice-mcp/issues"
+  },
+  "homepage": "https://github.com/CodeCraftersLLC/local-voice-mcp#readme",
   "scripts": {
     "test": "jest",
     "build": "tsc",
     "start": "ts-node src/server.ts",
     "start:mcp": "npm run build && node dist/mcp-server.js",
     "dev:mcp": "ts-node src/mcp-server.ts",
-    "dev:http": "MCP_MODE=http ts-node src/mcp-server.ts"
+    "dev:http": "MCP_MODE=http ts-node src/mcp-server.ts",
+    "prepublishOnly": "npm test && npm run build",
+    "version": "npm run build && git add -A dist",
+    "postversion": "git push && git push --tags"
   },
   "keywords": [
     "mcp",
@@ -23,6 +34,13 @@
   ],
   "license": "MIT",
   "description": "Give your MCP clients the ability to speak by running local voice models",
+  "files": [
+    "dist/",
+    "female-reference-voice.wav"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/node": "^22.15.24",
     "@types/supertest": "^6.0.3",
