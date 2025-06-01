@@ -222,11 +222,11 @@ export class ChatterboxService {
 
     const args = [
       this.scriptPath,
-      `--text=${sanitizeTextArg(text)}`,
-      `--output=${outputFile}`,
-      `--reference_audio=${sanitizeArg(validatedReferenceAudio, true)}`, // Allow empty for optional parameter
-      `--exaggeration=${sanitizeArg(exaggeration)}`,
-      `--cfg_weight=${sanitizeArg(cfgWeight)}`,
+      '--text', sanitizeTextArg(text),
+      '--output', outputFile,
+      '--reference_audio', validatedReferenceAudio, // Already validated and sanitized
+      '--exaggeration', String(exaggeration),
+      '--cfg_weight', String(cfgWeight)
     ];
 
     return new Promise((resolve, reject) => {

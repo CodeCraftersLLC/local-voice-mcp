@@ -366,12 +366,12 @@ export class TTSTools {
         command = "powershell";
         args = [
           "-c",
-          `(New-Object Media.SoundPlayer "${sanitizedAudioFile}").PlaySync()`,
+          `Add-Type -AssemblyName presentationcore; $player = New-Object System.Windows.Media.MediaPlayer; $player.Open([Uri]::new("${sanitizedAudioFile}")); $player.Play(); Start-Sleep -Seconds 5;`,
         ];
       } else {
         // Linux
         const ext = path.extname(audioFile).toLowerCase();
-        const safeAudioFile = audioFile.replace(/[`'"\\$]/g, "");
+        const safeAudioFile = path.basename(audioFile).replace(/[`'"\\$]/g, "");
         if (ext === ".mp3") {
           command = "mpg123";
           args = [safeAudioFile];

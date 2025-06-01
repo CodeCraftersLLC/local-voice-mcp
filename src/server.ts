@@ -6,6 +6,7 @@ import os from "os";
 import { finished } from "stream";
 import { ChatterboxService } from "./core/chatterbox.service";
 import { logger } from "./utils/logger";
+import crypto from "crypto";
 
 interface TTSRequest {
   text: string;
@@ -37,6 +38,7 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
   }
 
   // Validate API key against environment variable
+  // Validate API key using timing-safe comparison
   const validApiKey = process.env.API_KEY;
   if (!validApiKey) {
     logger.error("API_KEY environment variable not set");
@@ -44,13 +46,25 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
     return;
   }
 
-  if (typeof apiKey !== "string" || apiKey !== validApiKey) {
-    logger.warn("Invalid API key attempt");
-    res.status(403).json({ error: "Invalid API key" });
+  // Convert to buffers for secure comparison
+  const apiKeyBuffer = Buffer.from(apiKey as string, 'utf8');
+  const validKeyBuffer = Buffer.from(validApiKey, 'utf8');
+
+  // Check length first to prevent timing attacks
+  if (apiKeyBuffer.length !== validKeyBuffer.length) {
+    logger.warn("Invalid API key attempt (length mismatch)");
+    res.status(403).json({ error: "Access denied" });
     return;
   }
 
-  logger.log("API key validated successfully");
+  // Perform timing-safe comparison
+  if (!crypto.timingSafeEqual(apiKeyBuffer, validKeyBuffer)) {
+    logger.warn("Invalid API key attempt (content mismatch)");
+    res.status(403).json({ error: "Access denied" });
+    return;
+  }
+
+  logger.log("API key validated securely");
   next();
 };
 

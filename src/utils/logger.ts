@@ -13,35 +13,18 @@ const sanitizeLogInput = (input: any): string => {
   return String(input).replace(/\r|\n/g, " ");
 };
 
-const formatLogArgs = (args: any[]): string => {
-  return args
-    .map((arg) => {
-      if (arg instanceof Error) {
-        return JSON.stringify({
-          name: arg.name,
-          message: arg.message,
-          stack: arg.stack,
-        });
-      } else if (typeof arg === "object" && arg !== null) {
-        try {
-          return JSON.stringify(arg);
-        } catch (e) {
-          return String(arg);
-        }
-      } else {
-        return String(arg);
-      }
-    })
-    .join(" ");
-};
-
 const createLogEntry = (level: string, message: string, ...args: any[]) => {
-  const redact = (obj: any) => {
+  const redact = (obj: any): any => {
     if (typeof obj === "object" && obj !== null) {
-      const clone = { ...obj };
-      for (const key of Object.keys(clone)) {
+      if (Array.isArray(obj)) {
+        return obj.map(redact);
+      }
+      const clone: any = {};
+      for (const key of Object.keys(obj)) {
         if (/passw(or)?d|token|secret|api[_-]?key|authorization|auth/i.test(key)) {
           clone[key] = "[REDACTED]";
+        } else {
+          clone[key] = redact(obj[key]);
         }
       }
       return clone;
