@@ -56,15 +56,12 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
   const apiKeyBuffer = Buffer.from(apiKey, 'utf8');
   const validKeyBuffer = Buffer.from(validApiKey, 'utf8');
 
-  // Check length first to prevent timing attacks
-  if (apiKeyBuffer.length !== validKeyBuffer.length) {
-    logger.warn("Invalid API key attempt (length mismatch)");
-    res.status(403).json({ error: "Access denied" });
-    return;
-  }
+  // Zero-pad shorter buffer so both have equal length
+  const maxLen = Math.max(apiKeyBuffer.length, validKeyBuffer.length);
+  const a = Buffer.concat([apiKeyBuffer, Buffer.alloc(maxLen - apiKeyBuffer.length)]);
+  const b = Buffer.concat([validKeyBuffer, Buffer.alloc(maxLen - validKeyBuffer.length)]);
 
-  // Perform timing-safe comparison
-  if (!crypto.timingSafeEqual(apiKeyBuffer, validKeyBuffer)) {
+  if (!crypto.timingSafeEqual(a, b)) {
     logger.warn("Invalid API key attempt (content mismatch)");
     res.status(403).json({ error: "Access denied" });
     return;
@@ -117,6 +114,10 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
 
     // This call might throw, or return a path
     audioPath = await chatterbox.synthesize(sanitizedText, options);
+    
+    if (!audioPath) {
+      throw new Error("Synthesis returned no audio file path");
+    }
 
     // Validate audioPath is within TEMP_AUDIO_DIR (critical)
     const resolvedPath = path.resolve(audioPath);

@@ -83,14 +83,14 @@ export class TTSTools {
       );
     }
 
-    const maxCharacters = parseInt(
+    let maxCharacters = parseInt(
       process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
       10
     );
     if (isNaN(maxCharacters) || maxCharacters <= 0) {
       // Added robustness for maxCharacters
       logger.warn(`Invalid CHATTERBOX_MAX_CHARACTERS, defaulting to 2000.`);
-      // maxCharacters = 2000; // Or handle as an error if strictness is required
+      maxCharacters = 2000;
     }
     if (text && text.length > maxCharacters) {
       return createErrorResponse(

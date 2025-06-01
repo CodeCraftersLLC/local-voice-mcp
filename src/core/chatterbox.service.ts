@@ -66,46 +66,15 @@ export class ChatterboxService {
       throw new Error(`Path traversal detected: ${filePath}`);
     }
 
-    // Allow temp directory
-    const tempDir = os.tmpdir();
-    if (!normalizedPath.startsWith(tempDir)) {
-      const sensitiveDirs = [
-        "/etc",
-        "/bin",
-        "/sbin",
-        "/usr",
-        "/var",
-        "/sys",
-        "/dev",
-        "/boot",
-        "C:\\Windows",
-        "C:\\Program Files",
-        "C:\\Program Files (x86)",
-        "C:\\System32",
-      ];
-      // Skip security checks for temp directory
-      const tempDir = os.tmpdir();
-      if (!normalizedPath.startsWith(tempDir)) {
-        const sensitiveDirs = [
-          "/etc",
-          "/bin",
-          "/sbin",
-          "/usr",
-          "/var",
-          "/sys",
-          "/dev",
-          "/boot",
-          "C:\\Windows",
-          "C:\\Program Files",
-          "C:\\Program Files (x86)",
-          "C:\\System32",
-        ];
-        for (const dir of sensitiveDirs) {
-          if (normalizedPath.startsWith(dir)) {
-            throw new Error(`Access to sensitive directory (${dir}) blocked`);
-          }
-        }
-      }
+    // Restrict to temporary directory only
+    const tempDir = path.resolve(os.tmpdir());
+    if (
+      !normalizedPath.startsWith(tempDir + path.sep) &&
+      normalizedPath !== tempDir
+    ) {
+      throw new Error(
+        `Access restricted to temporary directory only: ${tempDir}`
+      );
     }
 
     if (!fs.existsSync(normalizedPath)) {
@@ -121,9 +90,7 @@ export class ChatterboxService {
     const allowedExtensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"];
     if (!allowedExtensions.includes(ext)) {
       throw new Error(
-        `Unsupported audio format: ${ext}. Allowed: ${allowedExtensions.join(
-          ", "
-        )}`
+        `Unsupported audio format: ${ext}. Allowed: ${allowedExtensions.join(", ")}`
       );
     }
 
