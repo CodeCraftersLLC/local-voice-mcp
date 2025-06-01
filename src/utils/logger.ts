@@ -6,11 +6,22 @@
 
 const isMcpMode = () => process.env.MCP_MODE !== "http";
 
+/**
+ * Sanitizes log input by removing control characters and ANSI escape sequences
+ * - Removes all control characters (ASCII 0-31 and 127)
+ * - Strips ANSI escape sequences used for terminal formatting
+ * - Removes bidirectional override characters (U+202E, U+202C)
+ * - Preserves valid text content
+ */
 const sanitizeLogInput = (input: any): string => {
-  if (typeof input === "string") {
-    return input.replace(/\r|\n/g, " ");
-  }
-  return String(input).replace(/\r|\n/g, " ");
+  const normalise = (val: string) =>
+    val
+      .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "") // Remove ANSI escapes first
+      .replace(/[\x00-\x1F\x7F\u202E\u202C]/g, " "); // Then replace control chars and bidirectional overrides
+
+  return typeof input === "string"
+    ? normalise(input)
+    : normalise(String(input));
 };
 
 const createLogEntry = (level: string, message: string, ...args: any[]) => {

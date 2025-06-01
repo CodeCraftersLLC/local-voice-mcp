@@ -13,6 +13,35 @@ if (!fs.existsSync(TEMP_AUDIO_DIR)) {
 }
 
 /**
+ * Helper to create a standardized error response object
+ */
+function createErrorResponse(
+  errorType: string,
+  message: string,
+  details?: Record<string, any>
+) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            success: false,
+            error: errorType,
+            message,
+            timestamp: new Date().toISOString(),
+            ...details,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
  * TTS Tool Implementation for MCP
  */
 export class TTSTools {
@@ -41,103 +70,84 @@ export class TTSTools {
   }) {
     const {
       text,
-      referenceAudio,
+      referenceAudio: rawReferenceAudioPath, // Use a different name to avoid confusion
       exaggeration = 0.2,
       cfg_weight = 1.0,
     } = params;
 
-    // Validate referenceAudio parameter if provided
-    if (referenceAudio && !/^[\w\-.\\/\\]+$/.test(referenceAudio)) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "Invalid input",
-                message: "Reference audio path contains invalid characters",
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
-    }
-
+    // Validate text (existing logic is fine)
     if (!text || typeof text !== "string" || text.trim().length === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "Invalid input",
-                message: "Text parameter is required and cannot be empty",
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
+      return createErrorResponse(
+        "Invalid input",
+        "Text parameter is required and cannot be empty"
+      );
     }
 
-    // Check character limit to prevent creating wav files that are too large
     const maxCharacters = parseInt(
       process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
       10
     );
+    if (isNaN(maxCharacters) || maxCharacters <= 0) {
+      // Added robustness for maxCharacters
+      logger.warn(`Invalid CHATTERBOX_MAX_CHARACTERS, defaulting to 2000.`);
+      // maxCharacters = 2000; // Or handle as an error if strictness is required
+    }
     if (text && text.length > maxCharacters) {
-      return {
-        content: [
+      return createErrorResponse(
+        "Text too long",
+        `Text exceeds maximum character limit of ${maxCharacters} characters.`,
+        {
+          maxCharacters,
+          currentLength: text.length,
+          sanitizedInput:
+            typeof text === "string"
+              ? text.replace(/[\r\n\t]/g, " ").substring(0, 100)
+              : "",
+        }
+      );
+    }
+
+    let resolvedReferenceAudioPath: string | undefined;
+    if (rawReferenceAudioPath) {
+      try {
+        // Use the ChatterboxService's validateReferenceAudioPath method directly
+        // This allows access to any audio file on the user's system
+        resolvedReferenceAudioPath = this.chatterbox.validateReferenceAudioPath(
+          rawReferenceAudioPath
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        return createErrorResponse(
+          "Invalid Reference Audio",
+          `Reference audio validation failed: ${message}`,
           {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "Text too long",
-                message: `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${text.length}`,
-                maxCharacters,
-                currentLength: text.length,
-                timestamp: new Date().toISOString(),
-                // Sanitize text to prevent log injection or information disclosure
-                sanitizedInput:
-                  typeof text === "string"
-                    ? text.replace(/[\r\n\t]/g, " ").substring(0, 100)
-                    : "",
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
+            providedPath: rawReferenceAudioPath,
+            supportedFormats: [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"],
+          }
+        );
+      }
     }
 
     try {
       const audioPath = await this.chatterbox.synthesize(text, {
-        referenceAudio,
+        // Pass the *resolved and validated* path to the core service
+        referenceAudio: resolvedReferenceAudioPath,
         exaggeration,
         cfg_weight,
       });
 
-      // Validate audio path is within TEMP_AUDIO_DIR (security check)
-      const resolvedPath = path.resolve(audioPath);
+      // Validate audio path is within TEMP_AUDIO_DIR (security check for output)
+      const resolvedOutputPath = path.resolve(audioPath);
       const normalizedTempDir = path.normalize(TEMP_AUDIO_DIR) + path.sep;
-      if (!resolvedPath.startsWith(normalizedTempDir)) {
-        throw new Error("Invalid audio path generated");
+      if (!resolvedOutputPath.startsWith(normalizedTempDir)) {
+        logger.error(
+          `Generated audio path "${resolvedOutputPath}" is outside the allowed temporary directory "${normalizedTempDir}". This is a critical security concern.`
+        );
+        throw new Error(
+          "Invalid audio path generated by synthesis service: Path is outside the allowed temporary directory."
+        );
       }
-
-      // Keep the file in place for the user to access
-      // Note: Avoid console.log in MCP mode as it interferes with stdio communication
 
       return {
         content: [
@@ -147,13 +157,10 @@ export class TTSTools {
               {
                 success: true,
                 message: "Speech synthesis completed successfully",
-                audioFile: audioPath,
+                audioFile: audioPath, // Return the path as generated by chatterbox (likely already in TEMP_AUDIO_DIR)
                 textLength: text.length,
-                audioFormat: "wav",
-                options: {
-                  exaggeration,
-                  cfg_weight,
-                },
+                audioFormat: "wav", // This might need to be dynamic based on chatterbox output
+                options: { exaggeration, cfg_weight },
                 generatedAt: new Date().toISOString(),
               },
               null,
@@ -163,27 +170,11 @@ export class TTSTools {
         ],
       };
     } catch (error) {
-      // Use logger which handles MCP stdio communication properly
       logger.error("TTS synthesis error:", error);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "TTS synthesis failed",
-                message:
-                  error instanceof Error ? error.message : "Unknown error",
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
+      return createErrorResponse(
+        "TTS synthesis failed",
+        error instanceof Error ? error.message : "Unknown error"
+      );
     }
   }
 
@@ -252,137 +243,138 @@ export class TTSTools {
     }>;
     isError?: boolean;
   }> {
-    const { audioFile } = params;
+    const { audioFile: rawAudioFile } = params; // Rename to distinguish from resolved path
 
-    // Validate input
-    if (!audioFile || audioFile.trim().length === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "Invalid input",
-                message: "Audio file path is required and cannot be empty",
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
+    if (!rawAudioFile || rawAudioFile.trim().length === 0) {
+      return createErrorResponse(
+        "Invalid input",
+        "Audio file path is required and cannot be empty"
+      );
+    }
+
+    let resolvedPathToPlay: string;
+    try {
+      // 1. Resolve the path
+      resolvedPathToPlay = path.resolve(rawAudioFile);
+    } catch (e) {
+      return createErrorResponse(
+        "Invalid Path",
+        `Audio file path could not be resolved. Original: "${rawAudioFile}"`
+      );
+    }
+
+    // 2. SECURITY CHECK: Ensure the file to be played is within TEMP_AUDIO_DIR
+    // This is a crucial security boundary for the `playAudio` function.
+    const normalizedTempDir = path.normalize(TEMP_AUDIO_DIR);
+    if (
+      !resolvedPathToPlay.startsWith(normalizedTempDir + path.sep) &&
+      resolvedPathToPlay !== normalizedTempDir
+    ) {
+      // Check if it's exactly the temp dir, or starts with temp dir + separator
+      return createErrorResponse(
+        "Access Denied",
+        "Audio file must be in the application's temporary directory for playback.",
+        {
+          allowedDirectory: TEMP_AUDIO_DIR,
+          requestedFile: rawAudioFile,
+          resolvedFile: resolvedPathToPlay,
+        }
+      );
+    }
+
+    // 3. Check existence and type (it should have been created by synthesizeText or similar)
+    if (!fs.existsSync(resolvedPathToPlay)) {
+      return createErrorResponse(
+        "File Not Found",
+        `Audio file does not exist: "${rawAudioFile}" (resolved to "${resolvedPathToPlay}")`
+      );
+    }
+    try {
+      if (!fs.statSync(resolvedPathToPlay).isFile()) {
+        return createErrorResponse(
+          "Not a File",
+          `Audio path is not a file: "${rawAudioFile}" (resolved to "${resolvedPathToPlay}")`
+        );
+      }
+    } catch (e) {
+      return createErrorResponse(
+        "File Access Error",
+        `Cannot access audio file: "${rawAudioFile}". Error: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+    }
+
+    // 4. Validate file extension
+    const ext = path.extname(resolvedPathToPlay).toLowerCase();
+    if (![".wav", ".mp3"].includes(ext)) {
+      return createErrorResponse(
+        "Unsupported Format",
+        `Unsupported audio format: "${ext}". Supported: .wav, .mp3. File: "${rawAudioFile}"`
+      );
     }
 
     try {
-      // Validate file exists and is accessible
-      if (!fs.existsSync(audioFile)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: "File not found",
-                  message: `Audio file does not exist: ${audioFile}`,
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Validate file extension (support WAV and MP3)
-      const ext = path.extname(audioFile).toLowerCase();
-      if (![".wav", ".mp3"].includes(ext)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: "Unsupported format",
-                  message: `Unsupported audio format: ${ext}. Supported formats: .wav, .mp3`,
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Security: Ensure the file is within temp directory only (principle of least privilege)
-      const resolvedPath = path.resolve(audioFile);
-      const tempDir = path.resolve(TEMP_AUDIO_DIR);
-
-      if (!resolvedPath.startsWith(tempDir + path.sep)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  success: false,
-                  error: "Access denied",
-                  message:
-                    "Audio file must be in the temporary directory for security reasons",
-                  allowedDirectory: TEMP_AUDIO_DIR,
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-
       // Play the audio file using system command
+      // IMPORTANT: Command Injection Mitigation for `spawn`
+      // By passing arguments as an array to `spawn`, you avoid direct shell interpretation
+      // of the arguments, which is the primary defense against command injection.
+      // The `resolvedPathToPlay` has been validated to be within TEMP_AUDIO_DIR.
       const { spawn } = require("child_process");
       let command: string;
       let args: string[];
 
-      // Determine the appropriate command based on the platform
+      const fileArg = resolvedPathToPlay; // Use the fully resolved, validated path
+
       if (process.platform === "darwin") {
-        // macOS
         command = "afplay";
-        args = [audioFile];
+        args = [fileArg];
       } else if (process.platform === "win32") {
-        // Windows - sanitize audioFile to prevent command injection
-        // Preserve backslashes for Windows paths but remove other dangerous characters
-        const sanitizedAudioFile = audioFile.replace(/[`'"\n\r]/g, "");
         command = "powershell";
+        // For PowerShell, ensure paths with spaces are handled.
+        // Using [System.IO.Path]::GetFullPath('') helps PowerShell resolve, but we already have an absolute path.
+        // The single quotes and doubling internal single quotes is a common PowerShell string escaping.
+        const psScript = `
+          Add-Type -AssemblyName PresentationCore;
+          $player = New-Object System.Windows.Media.MediaPlayer;
+          $player.Open([System.Uri]::new('${fileArg.replace(/'/g, "''")}'));
+          $player.Play();
+          while ($player.Source -ne $null -and $player.Position -lt $player.NaturalDuration) { Start-Sleep -Milliseconds 200 };
+        `;
         args = [
-          "-c",
-          `Add-Type -AssemblyName presentationcore; $player = New-Object System.Windows.Media.MediaPlayer; $player.Open([Uri]::new("${sanitizedAudioFile}")); $player.Play(); Start-Sleep -Seconds 5;`,
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          psScript,
         ];
       } else {
         // Linux
-        const ext = path.extname(audioFile).toLowerCase();
-        const safeAudioFile = path.basename(audioFile).replace(/[`'"\\$]/g, "");
+        // Prefer ffplay if available, as it's more versatile. Fallback to aplay/mpg123.
+        // This part might need adjustment based on what's commonly installed.
+        // For simplicity, sticking to your original logic but using the full path.
         if (ext === ".mp3") {
-          command = "mpg123";
-          args = [safeAudioFile];
+          command = "mpg123"; // You might want to add -q for quiet
+          args = ["-q", fileArg];
         } else {
-          command = "aplay";
-          args = [safeAudioFile];
+          // .wav
+          command = "aplay"; // You might want to add -q for quiet
+          args = ["-q", fileArg];
         }
+        // A more robust Linux approach might try `ffplay -nodisp -autoexit` or `paplay`
       }
 
       return new Promise((resolve) => {
+        logger.info(`Executing playback: ${command} ${args.join(" ")}`);
         const player = spawn(command, args);
+
+        let stderrOutput = "";
+        if (player.stderr) {
+          player.stderr.on("data", (data: any) => {
+            stderrOutput += data.toString();
+          });
+        }
 
         player.on("close", (code: number) => {
           if (code === 0) {
@@ -393,8 +385,8 @@ export class TTSTools {
                   text: JSON.stringify(
                     {
                       success: true,
-                      message: `Successfully played audio file: ${audioFile}`,
-                      audioFile: audioFile,
+                      message: `Successfully played audio file: ${rawAudioFile}`,
+                      audioFile: rawAudioFile,
                       platform: process.platform,
                       command: `${command} ${args.join(" ")}`,
                       timestamp: new Date().toISOString(),
@@ -406,75 +398,41 @@ export class TTSTools {
               ],
             });
           } else {
-            resolve({
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify(
-                    {
-                      success: false,
-                      error: "Playback failed",
-                      message: `Audio playback failed with exit code: ${code}`,
-                      audioFile: audioFile,
-                      platform: process.platform,
-                      command: `${command} ${args.join(" ")}`,
-                      timestamp: new Date().toISOString(),
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-              isError: true,
-            });
+            logger.error(
+              `Playback failed for "${fileArg}". Command: ${command} ${args.join(
+                " "
+              )}. Exit code: ${code}. Stderr: ${stderrOutput}`
+            );
+            resolve(
+              createErrorResponse(
+                "Playback Failed",
+                `Audio playback command failed with exit code: ${code}. File: "${rawAudioFile}". Stderr: ${stderrOutput.substring(
+                  0,
+                  200
+                )}`
+              )
+            );
           }
         });
 
         player.on("error", (err: Error) => {
-          resolve({
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify(
-                  {
-                    success: false,
-                    error: "Command failed",
-                    message: `Failed to execute audio player: ${err.message}`,
-                    audioFile: audioFile,
-                    platform: process.platform,
-                    command: `${command} ${args.join(" ")}`,
-                    timestamp: new Date().toISOString(),
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-            isError: true,
-          });
+          logger.error(
+            `Failed to start playback for "${fileArg}". Command: ${command}. Error: ${err.message}`
+          );
+          resolve(
+            createErrorResponse(
+              "Command Execution Failed",
+              `Failed to start audio player "${command}". Error: ${err.message}. Is the player installed and in PATH?`
+            )
+          );
         });
       });
     } catch (error) {
       logger.error("Audio playback error:", error);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                success: false,
-                error: "Playback error",
-                message:
-                  error instanceof Error ? error.message : "Unknown error",
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
+      return createErrorResponse(
+        "Playback error",
+        error instanceof Error ? error.message : "Unknown error"
+      );
     }
   }
 }

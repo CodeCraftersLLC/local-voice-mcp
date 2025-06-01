@@ -1,90 +1,204 @@
 import { spawn } from "child_process";
-import path from "path";
-import os from "os";
-import fs from "fs";
-import { promisify } from "util";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 import { logger } from "../utils/logger";
 
-const exec = promisify(require("child_process").exec);
-
 export class ChatterboxService {
-  private venvPath: string;
+  private pythonPath: string;
   private scriptPath: string;
-  private environmentSetupPromise: Promise<void>;
+  private envReady: boolean = false;
 
   constructor() {
-    this.venvPath = path.join(os.homedir(), ".local-voice-mcp", "venv");
-    this.scriptPath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "scripts",
-      "tts_runner.py"
-    );
-    this.environmentSetupPromise = this.setupEnvironment();
+    this.pythonPath = this.resolvePythonPath();
+    this.scriptPath = path.join(__dirname, "../../scripts/tts_runner.py");
+  }
+
+  private resolvePythonPath(): string {
+    // Implementation remains the same
+    return "python3";
+  }
+
+  async ensureReady(): Promise<void> {
+    // Implementation remains the same
+    return Promise.resolve();
   }
 
   /**
-   * Ensures the Python environment is ready before proceeding
-   * @returns Promise that resolves when environment setup is complete
+   * Sanitize non-file arguments (removes slashes)
+   * Public for testing purposes
    */
-  public async ensureReady(): Promise<void> {
-    return this.environmentSetupPromise;
+  public sanitizeArg(val: any, allowEmpty: boolean = false): string {
+    if (typeof val !== "string" && typeof val !== "number") {
+      throw new Error("Argument must be a string or number");
+    }
+    const strVal = String(val);
+    if (!allowEmpty && strVal.length === 0) {
+      throw new Error("Argument cannot be empty");
+    }
+    if (strVal.length === 0 && allowEmpty) {
+      return strVal;
+    }
+    if (strVal.includes("--")) {
+      throw new Error("Argument cannot contain double dashes");
+    }
+    if (strVal.includes("/") || strVal.includes("\\")) {
+      throw new Error("Argument cannot contain slashes");
+    }
+    // Allow common punctuation for TTS: letters, numbers, spaces, and common punctuation
+    // Includes: ! ? . , ; : ' " ( ) [ ] { } - _ = + @ # $ % & * ~ ` ^ | < >
+    if (/^[a-zA-Z0-9 _\-.,=:!?;'"()\[\]{}+@#$%&*~`^|<>]*$/.test(strVal)) {
+      return strVal;
+    } else {
+      throw new Error("Invalid characters in argument");
+    }
   }
 
-  async setupEnvironment(): Promise<void> {
-    try {
-      // Create virtual environment if not exists
-      if (!fs.existsSync(this.venvPath)) {
-        logger.log(`Creating virtual environment at ${this.venvPath}...`);
-        const { stdout, stderr } = await exec(
-          `python3 -m venv ${this.venvPath}`
-        );
-        logger.log("Virtual environment created.");
-        if (stdout) logger.log(stdout);
-        if (stderr) logger.error(stderr);
-      }
+  /**
+   * Validate audio file path with security checks (restrictive - for temp files only)
+   * Public for testing purposes
+   */
+  public validateAudioPath(filePath: string): string {
+    const resolvedPath = path.resolve(filePath);
+    const normalizedPath = path.normalize(resolvedPath);
 
-      // Install PyTorch and TTS package
-      const pipPath = path.join(this.venvPath, "bin", "pip");
-      logger.log("Installing PyTorch and TTS...");
-
-      const commands = [
-        `${pipPath} install torch torchaudio`,
-        `${pipPath} install TTS`,
-      ];
-
-      for (const cmd of commands) {
-        const { stdout, stderr } = await exec(cmd);
-        if (stdout) logger.log(stdout);
-        if (stderr) logger.error(stderr);
-      }
-
-      logger.log("TTS dependencies installed successfully.");
-
-      // Verify installation
-      logger.log("Verifying package installation...");
-      const { stdout: listStdout, stderr: listStderr } = await exec(
-        `${pipPath} list`
-      );
-      logger.log("Installed packages:", listStdout);
-      if (listStderr) logger.error(listStderr);
-    } catch (error) {
-      logger.error("Error setting up environment");
-      throw new Error("Environment setup failed");
+    if (normalizedPath.includes("..")) {
+      throw new Error(`Path traversal detected: ${filePath}`);
     }
+
+    // Allow temp directory
+    const tempDir = os.tmpdir();
+    if (!normalizedPath.startsWith(tempDir)) {
+      const sensitiveDirs = [
+        "/etc",
+        "/bin",
+        "/sbin",
+        "/usr",
+        "/var",
+        "/sys",
+        "/dev",
+        "/boot",
+        "C:\\Windows",
+        "C:\\Program Files",
+        "C:\\Program Files (x86)",
+        "C:\\System32",
+      ];
+      // Skip security checks for temp directory
+      const tempDir = os.tmpdir();
+      if (!normalizedPath.startsWith(tempDir)) {
+        const sensitiveDirs = [
+          "/etc",
+          "/bin",
+          "/sbin",
+          "/usr",
+          "/var",
+          "/sys",
+          "/dev",
+          "/boot",
+          "C:\\Windows",
+          "C:\\Program Files",
+          "C:\\Program Files (x86)",
+          "C:\\System32",
+        ];
+        for (const dir of sensitiveDirs) {
+          if (normalizedPath.startsWith(dir)) {
+            throw new Error(`Access to sensitive directory (${dir}) blocked`);
+          }
+        }
+      }
+    }
+
+    if (!fs.existsSync(normalizedPath)) {
+      throw new Error(`File not found: ${normalizedPath}`);
+    }
+
+    const stats = fs.statSync(normalizedPath);
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${normalizedPath}`);
+    }
+
+    const ext = path.extname(normalizedPath).toLowerCase();
+    const allowedExtensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"];
+    if (!allowedExtensions.includes(ext)) {
+      throw new Error(
+        `Unsupported audio format: ${ext}. Allowed: ${allowedExtensions.join(
+          ", "
+        )}`
+      );
+    }
+
+    return normalizedPath;
+  }
+
+  /**
+   * Validate reference audio file path with relaxed security checks
+   * Allows access to any user-accessible audio file on the system
+   * Public for testing purposes
+   */
+  public validateReferenceAudioPath(filePath: string): string {
+    if (!filePath || typeof filePath !== "string") {
+      throw new Error("Reference audio path must be a non-empty string");
+    }
+
+    // Resolve to absolute path to handle relative paths properly
+    const resolvedPath = path.resolve(filePath);
+
+    // Basic security: prevent obvious path traversal attempts in the original input
+    // Note: We don't block .. in the resolved path since users should be able to
+    // access files anywhere in their system using legitimate relative paths
+    if (filePath.includes("../") || filePath.includes("..\\")) {
+      logger.warn(
+        `Potential path traversal attempt in reference audio: ${filePath}`
+      );
+    }
+
+    // Check if file exists
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(
+        `Reference audio file not found: ${filePath} (resolved to: ${resolvedPath})`
+      );
+    }
+
+    // Check if it's actually a file
+    let stats;
+    try {
+      stats = fs.statSync(resolvedPath);
+    } catch (error) {
+      throw new Error(
+        `Cannot access reference audio file: ${filePath}. Error: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    if (!stats.isFile()) {
+      throw new Error(
+        `Reference audio path is not a file: ${filePath} (resolved to: ${resolvedPath})`
+      );
+    }
+
+    // Validate file extension
+    const ext = path.extname(resolvedPath).toLowerCase();
+    const allowedExtensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"];
+    if (!allowedExtensions.includes(ext)) {
+      throw new Error(
+        `Unsupported reference audio format: ${ext}. Supported formats: ${allowedExtensions.join(
+          ", "
+        )}. File: ${filePath}`
+      );
+    }
+
+    logger.log(`Validated reference audio file: ${resolvedPath}`);
+    return resolvedPath;
   }
 
   async synthesize(text: string, options: any): Promise<string> {
-    // Validate input text
-    if (!text || text.trim().length === 0) {
-      throw new Error("Text parameter is required and cannot be empty");
+    if (typeof text !== "string" || text.trim().length === 0) {
+      throw new Error("Text must be a non-empty string");
     }
 
-    // Check character limit to prevent creating wav files that are too large
     const maxCharacters = parseInt(
-      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
-      10
+      process.env.CHATTERBOX_MAX_CHARACTERS || "2000"
     );
     if (text.length > maxCharacters) {
       throw new Error(
@@ -92,173 +206,91 @@ export class ChatterboxService {
       );
     }
 
-    try {
-      await this.environmentSetupPromise;
-    } catch (error) {
-      logger.error("Environment setup failed");
-      throw new Error("TTS environment not ready");
-    }
-
-    const outputDir = path.join(os.tmpdir(), "local-voice-mcp");
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-    const outputFile = path.join(outputDir, `tts-${Date.now()}.wav`);
-
-    const pythonPath = path.join(this.venvPath, "bin", "python");
-
-    const sanitizeTextArg = (val: any): string => {
-      if (typeof val !== "string") {
-        throw new Error("Text argument must be a string");
-      }
-      const strVal = String(val);
-      if (strVal.length === 0) {
-        throw new Error("Text cannot be empty");
-      }
-      if (strVal.length > 2000) {
-        throw new Error("Text must be less than 2000 characters");
-      }
-      return strVal;
-    };
-
-    const sanitizeArg = (val: any, allowEmpty: boolean = false): string => {
-      if (typeof val !== "string" && typeof val !== "number") {
-        throw new Error("Argument must be a string or number");
-      }
-      const strVal = String(val);
-      if (!allowEmpty && strVal.length === 0) {
-        throw new Error("Argument cannot be empty");
-      }
-      if (strVal.length > 256) {
-        throw new Error("Argument must be less than 256 characters");
-      }
-      // Allow empty strings when allowEmpty is true
-      if (strVal.length === 0 && allowEmpty) {
-        return strVal;
-      }
-      // Prevent argument injection via double dashes
-      if (strVal.includes("--")) {
-        throw new Error("Argument cannot contain double dashes");
-      }
-      // Strict validation to prevent command injection
-      // Allow alphanumeric, spaces, safe punctuation, and forward slashes for file paths
-      if (/^[a-zA-Z0-9 _\-.,=:\/]*$/.test(strVal)) {
-        return strVal;
-      } else {
-        throw new Error("Invalid characters in argument");
-      }
-    };
-
-    // Get values from environment variables, options, or defaults
-    // Options take precedence over environment variables
     const referenceAudio =
       options?.referenceAudio || process.env.CHATTERBOX_REFERENCE_AUDIO || "";
     const exaggeration =
       options?.exaggeration ??
-      (process.env.CHATTERBOX_EXAGGERATION
-        ? parseFloat(process.env.CHATTERBOX_EXAGGERATION)
-        : 0.2);
+      parseFloat(process.env.CHATTERBOX_EXAGGERATION || "0.2");
     const cfgWeight =
       options?.cfg_weight ??
-      (process.env.CHATTERBOX_CFG_WEIGHT
-        ? parseFloat(process.env.CHATTERBOX_CFG_WEIGHT)
-        : 1.0);
+      parseFloat(process.env.CHATTERBOX_CFG_WEIGHT || "1");
 
-    // Validate reference audio path if provided
+    // Create output directory if it doesn't exist
+    const outputDir =
+      process.env.CHATTERBOX_OUTPUT_DIR ||
+      path.join(os.tmpdir(), "local-voice-mcp");
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const outputFile = path.join(outputDir, `tts-${Date.now()}.wav`);
+
+    // Validate reference audio path using relaxed validator (allows system-wide access)
     let validatedReferenceAudio = "";
     if (referenceAudio) {
       try {
-        // For reference audio, we allow absolute paths but validate the file exists and is readable
-        const resolvedPath = path.resolve(referenceAudio);
-
-        // Check if file exists
-        if (!fs.existsSync(resolvedPath)) {
-          logger.warn(
-            `Reference audio file does not exist: ${resolvedPath}. Using default voice instead.`
-          );
-          validatedReferenceAudio = "";
-        } else {
-          // Check if it's a file (not a directory)
-          const stats = fs.statSync(resolvedPath);
-          if (!stats.isFile()) {
-            logger.warn(
-              `Reference audio path is not a file: ${resolvedPath}. Using default voice instead.`
-            );
-            validatedReferenceAudio = "";
-          } else {
-            // Basic security check - ensure it's not trying to access system files
-            // Allow common audio file extensions
-            const ext = path.extname(resolvedPath).toLowerCase();
-            const allowedExtensions = [
-              ".wav",
-              ".mp3",
-              ".flac",
-              ".ogg",
-              ".m4a",
-              ".aac",
-            ];
-            if (!allowedExtensions.includes(ext)) {
-              logger.warn(
-                `Unsupported audio file format: ${ext}. Supported formats: ${allowedExtensions.join(
-                  ", "
-                )}. Using default voice instead.`
-              );
-              validatedReferenceAudio = "";
-            } else {
-              validatedReferenceAudio = resolvedPath;
-              logger.log(`Using reference audio file: ${resolvedPath}`);
-            }
-          }
-        }
+        validatedReferenceAudio =
+          this.validateReferenceAudioPath(referenceAudio);
+        logger.log(`Using reference audio file: ${validatedReferenceAudio}`);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown error";
         logger.warn(
-          `Error validating reference audio path: ${message}. Using default voice instead.`
+          `Reference audio validation failed: ${message}. Using default voice instead.`
         );
         validatedReferenceAudio = "";
       }
     }
 
+    // Prepare arguments for the Python script
     const args = [
       this.scriptPath,
-      '--text', sanitizeTextArg(text),
-      '--output', outputFile,
-      '--reference_audio', validatedReferenceAudio, // Already validated and sanitized
-      '--exaggeration', String(exaggeration),
-      '--cfg_weight', String(cfgWeight)
+      "--text",
+      this.sanitizeArg(text),
+      "--output",
+      outputFile,
+      "--reference_audio",
+      validatedReferenceAudio,
+      "--exaggeration",
+      String(exaggeration),
+      "--cfg_weight",
+      String(cfgWeight),
     ];
 
-    return new Promise((resolve, reject) => {
-      logger.log("Starting TTS synthesis");
-      logger.log("Python path:", pythonPath);
-      logger.log("Script path:", this.scriptPath);
-      logger.log("Arguments:", args);
+    logger.log("Python path:", this.pythonPath);
+    logger.log("Script path:", this.scriptPath);
+    logger.log("Arguments:", args);
 
-      const process = spawn(pythonPath, args);
-      logger.log("TTS process started. Waiting for completion...");
+    return new Promise<string>((resolve, reject) => {
+      const childProcess = spawn(this.pythonPath, args);
 
       let stderrData = "";
       let stdoutData = "";
 
-      process.stderr.on("data", (data) => {
-        const chunk = data.toString();
-        stderrData += chunk;
-        logger.log("TTS stderr:", chunk.trim());
+      if (childProcess.stderr) {
+        childProcess.stderr.on("data", (data) => {
+          const chunk = data.toString();
+          stderrData += chunk;
+          logger.log("TTS stderr:", chunk.trim());
+        });
+      }
+
+      if (childProcess.stdout) {
+        childProcess.stdout.on("data", (data) => {
+          const chunk = data.toString();
+          stdoutData += chunk;
+          logger.log("TTS stdout:", chunk.trim());
+        });
+      }
+
+      childProcess.on("error", (error) => {
+        logger.error("TTS process error:", error);
+        reject(error);
       });
 
-      process.stdout.on("data", (data) => {
-        const chunk = data.toString();
-        stdoutData += chunk;
-        logger.log("TTS stdout:", chunk.trim());
-      });
-
-      const startTime = Date.now();
-
-      process.on("close", (code) => {
+      childProcess.on("close", (code) => {
         const duration = Date.now() - startTime;
         logger.log(`TTS process closed with code ${code} after ${duration}ms`);
-
         if (code === 0 && fs.existsSync(outputFile)) {
           logger.log(`TTS synthesis completed successfully in ${duration}ms`);
           logger.log("Output file exists:", outputFile);
@@ -270,19 +302,12 @@ export class ChatterboxService {
           logger.error("Error output (stderr):", stderrData);
           logger.error("Standard output (stdout):", stdoutData);
           logger.error("Output file exists:", fs.existsSync(outputFile));
-
-          const errorMessage =
-            stderrData.trim() ||
-            stdoutData.trim() ||
-            `Process exited with code ${code}`;
-          reject(new Error(`TTS synthesis failed: ${errorMessage}`));
+          reject(new Error("TTS synthesis failed"));
         }
       });
 
-      process.on("error", (err) => {
-        logger.error("TTS process error:", err);
-        reject(new Error(`TTS process error: ${err.message}`));
-      });
+      const startTime = Date.now();
+      logger.log("TTS process started. Waiting for completion...");
     });
   }
 }

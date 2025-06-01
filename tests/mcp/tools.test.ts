@@ -7,6 +7,7 @@ jest.mock("../../src/core/chatterbox.service", () => ({
   ChatterboxService: jest.fn().mockImplementation(() => ({
     ensureReady: jest.fn().mockResolvedValue(undefined),
     synthesize: jest.fn(),
+    validateReferenceAudioPath: jest.fn(),
   })),
 }));
 
@@ -15,6 +16,7 @@ jest.mock("fs", () => ({
   ...jest.requireActual("fs"),
   existsSync: jest.fn(),
   mkdirSync: jest.fn(),
+  statSync: jest.fn(),
 }));
 
 const mockFs = fs as jest.Mocked<typeof fs>;
@@ -78,25 +80,144 @@ describe("TTSTools", () => {
       );
       mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
 
+      // Create a valid reference audio file path for testing
+      const refAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "test-ref.wav"
+      );
+
+      // Mock the ChatterboxService's validateReferenceAudioPath method to return the path
+      mockChatterbox.validateReferenceAudioPath.mockReturnValue(refAudioPath);
+
       await ttsTools.synthesizeText({
         text: "Hello world",
-        referenceAudio: "ref.wav",
+        referenceAudio: refAudioPath,
         exaggeration: 0.5,
         cfg_weight: 1.2,
       });
 
       expect(mockChatterbox.synthesize).toHaveBeenCalledWith("Hello world", {
-        referenceAudio: "ref.wav",
+        referenceAudio: refAudioPath, // Should be the resolved path
         exaggeration: 0.5,
         cfg_weight: 1.2,
       });
+    });
+
+    it("should handle reference audio from anywhere in the system", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      // Test with a reference audio file in user's home directory
+      const homeDir = require("os").homedir();
+      const userRefAudioPath = require("path").join(
+        homeDir,
+        "Music",
+        "my-voice.wav"
+      );
+
+      // Mock the ChatterboxService's validateReferenceAudioPath method to return the path
+      mockChatterbox.validateReferenceAudioPath.mockReturnValue(
+        userRefAudioPath
+      );
+
+      const result = await ttsTools.synthesizeText({
+        text: "Hello from my custom voice!",
+        referenceAudio: userRefAudioPath,
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        "Hello from my custom voice!",
+        {
+          referenceAudio: userRefAudioPath, // Should allow system-wide paths
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
+    });
+
+    it("should handle text with punctuation", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      const result = await ttsTools.synthesizeText({
+        text: "Hello, world! How are you? I'm doing great!",
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        "Hello, world! How are you? I'm doing great!",
+        {
+          referenceAudio: undefined,
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
+    });
+
+    it("should handle text with various punctuation marks", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      const textWithPunctuation =
+        "Price: $10.99! Email@example.com? Math: 2+2=4. Text with (parentheses) and [brackets].";
+
+      const result = await ttsTools.synthesizeText({
+        text: textWithPunctuation,
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        textWithPunctuation,
+        {
+          referenceAudio: undefined,
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
     });
 
     it("should reject empty text", async () => {
       const result = await ttsTools.synthesizeText({ text: "" });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -109,7 +230,7 @@ describe("TTSTools", () => {
       const result = await ttsTools.synthesizeText({ text: "   " });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -126,7 +247,7 @@ describe("TTSTools", () => {
       const result = await ttsTools.synthesizeText({ text: "Hello world" });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -141,7 +262,7 @@ describe("TTSTools", () => {
       const result = await ttsTools.synthesizeText({ text: "Hello world" });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -174,17 +295,19 @@ describe("TTSTools", () => {
     });
 
     it("should play audio file successfully", async () => {
-      // Use a path in the user's home directory which should pass security validation
+      // Use a path in the temporary directory which should pass security validation
       const audioFile = require("path").join(
-        require("os").homedir(),
+        require("os").tmpdir(),
+        "local-voice-mcp",
         "test.wav"
       );
       mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
 
       const result = await ttsTools.playAudio({ audioFile });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBeFalsy();
+      expect(!("isError" in result) || !result.isError).toBe(true);
 
       const response = JSON.parse(result.content[0].text!);
       expect(response.success).toBe(true);
@@ -197,7 +320,7 @@ describe("TTSTools", () => {
       const result = await ttsTools.playAudio({ audioFile: "" });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -205,13 +328,17 @@ describe("TTSTools", () => {
     });
 
     it("should reject non-existent file", async () => {
-      const audioFile = "/tmp/local-voice-mcp/nonexistent.wav";
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "nonexistent.wav"
+      );
       mockFs.existsSync.mockReturnValue(false);
 
       const result = await ttsTools.playAudio({ audioFile });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -219,13 +346,18 @@ describe("TTSTools", () => {
     });
 
     it("should reject unsupported file format", async () => {
-      const audioFile = "/tmp/local-voice-mcp/test.txt";
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.txt"
+      );
       mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
 
       const result = await ttsTools.playAudio({ audioFile });
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);
@@ -257,7 +389,7 @@ describe("TTSTools", () => {
       const result = await ttsTools.getStatus();
 
       expect(result.content).toHaveLength(1);
-      expect(result.isError).toBe(true);
+      expect("isError" in result && result.isError).toBe(true);
 
       const errorResponse = JSON.parse(result.content[0].text!);
       expect(errorResponse.success).toBe(false);

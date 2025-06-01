@@ -13,7 +13,7 @@ The core requests are:
       "command": "npx",
       "args": ["-y", "taskqueue-mcp"],
       "env": {
-        "TASK_MANAGER_FILE_PATH": "/Users/mikestaub/Desktop/node-sandbox/tasks.json"
+        "TASK_MANAGER_FILE_PATH": "/Users/soyboyscout/Desktop/node-sandbox/tasks.json"
       }
     }
     ```
@@ -21,7 +21,7 @@ The core requests are:
 
 ## 2. Product Requirements Document (PRD) for MCP Feature
 
-**File to Create/Update:** `/Users/mikestaub/code/codecrafters/ai-coding-tools/local-voice-mcp/.project/feat/mcp/prd.md`
+**File to Create/Update:** `/Users/soyboyscout/code/codecrafters/ai-coding-tools/local-voice-mcp/.project/feat/mcp/prd.md`
 
 **Content:**
 

@@ -37,6 +37,12 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
     return;
   }
 
+  // Handle case where multiple API keys are provided
+  if (Array.isArray(apiKey)) {
+    res.status(400).json({ error: "Multiple API keys provided" });
+    return;
+  }
+
   // Validate API key against environment variable
   // Validate API key using timing-safe comparison
   const validApiKey = process.env.API_KEY;
@@ -47,7 +53,7 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
   }
 
   // Convert to buffers for secure comparison
-  const apiKeyBuffer = Buffer.from(apiKey as string, 'utf8');
+  const apiKeyBuffer = Buffer.from(apiKey, 'utf8');
   const validKeyBuffer = Buffer.from(validApiKey, 'utf8');
 
   // Check length first to prevent timing attacks
@@ -67,6 +73,8 @@ const authenticate = (req: Request, res: Response, next: NextFunction) => {
   logger.log("API key validated securely");
   next();
 };
+
+export { authenticate };
 
 async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
   let audioPath: string | undefined;

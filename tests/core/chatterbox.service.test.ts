@@ -1,13 +1,13 @@
-import { ChatterboxService } from "../../src/core/chatterbox.service";
-import fs from "fs";
-import path from "path";
-import os from "os";
-
 // Mock child_process to avoid actual Python execution in tests
 jest.mock("child_process", () => ({
   spawn: jest.fn(),
   exec: jest.fn(),
 }));
+
+import { ChatterboxService } from "../../src/core/chatterbox.service";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 // Mock fs operations
 jest.mock("fs", () => ({
@@ -16,6 +16,7 @@ jest.mock("fs", () => ({
   mkdirSync: jest.fn(),
   readFileSync: jest.fn(),
   unlinkSync: jest.fn(),
+  statSync: jest.fn(),
 }));
 
 const mockFs = fs as jest.Mocked<typeof fs>;
@@ -62,13 +63,207 @@ describe("ChatterboxService", () => {
 
     it("should handle environment setup failure", async () => {
       // Mock failed environment setup
-      mockExec.mockImplementation(() => {
-        throw new Error("Environment setup failed");
+      mockExec.mockImplementation((cmd: string, callback?: Function) => {
+        if (callback) {
+          callback(new Error("Environment setup failed"));
+        }
+        return Promise.reject(new Error("Environment setup failed"));
       });
 
       chatterboxService = new ChatterboxService();
 
       await expect(chatterboxService.ensureReady()).rejects.toThrow();
+    });
+
+    describe("security validators", () => {
+      it("should reject arguments containing slashes in sanitizeArg", () => {
+        const service = new ChatterboxService();
+        const serviceAny = service as any; // Type assertion to access private methods
+
+        // Create a mock synthesize call to access the private methods
+        try {
+          service.synthesize("test", {});
+        } catch (e) {
+          // Ignore - we just want to access the methods
+        }
+
+        expect(() => serviceAny.sanitizeArg("valid/arg", false)).toThrow(
+          "Argument cannot contain slashes"
+        );
+        expect(() => serviceAny.sanitizeArg("invalid\\arg", false)).toThrow(
+          "Argument cannot contain slashes"
+        );
+        expect(() => serviceAny.sanitizeArg("valid-arg", false)).not.toThrow();
+      });
+
+      it("should allow common punctuation in sanitizeArg", () => {
+        const service = new ChatterboxService();
+        const serviceAny = service as any; // Type assertion to access private methods
+
+        // Test common punctuation marks that should be allowed for TTS
+        expect(() =>
+          serviceAny.sanitizeArg("Hello, world!", false)
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg("What's happening?", false)
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg("Great! How are you?", false)
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg(
+            "Text with (parentheses) and [brackets]",
+            false
+          )
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg("Email@example.com", false)
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg("Price: $10.99", false)
+        ).not.toThrow();
+        expect(() =>
+          serviceAny.sanitizeArg("Math: 2+2=4", false)
+        ).not.toThrow();
+
+        // Test that the result is returned correctly
+        expect(serviceAny.sanitizeArg("Hello, world!", false)).toBe(
+          "Hello, world!"
+        );
+        expect(serviceAny.sanitizeArg("What's happening?", false)).toBe(
+          "What's happening?"
+        );
+      });
+
+      it("should validate reference audio paths from anywhere in the system", () => {
+        const service = new ChatterboxService();
+
+        // Create a test audio file in the user's home directory (simulating user's audio collection)
+        const homeDir = os.homedir();
+        const testAudioPath = path.join(homeDir, "test-reference.wav");
+
+        // Mock file system to simulate the file exists
+        mockFs.existsSync.mockImplementation((filePath: any) => {
+          const pathStr = filePath.toString();
+          return (
+            pathStr === testAudioPath || pathStr.includes("local-voice-mcp")
+          );
+        });
+        mockFs.statSync.mockImplementation((filePath: any) => {
+          const pathStr = filePath.toString();
+          if (pathStr === testAudioPath) {
+            return { isFile: () => true } as any;
+          }
+          return { isFile: () => false } as any;
+        });
+
+        // Should allow access to user's audio files anywhere in the system
+        expect(() =>
+          service.validateReferenceAudioPath(testAudioPath)
+        ).not.toThrow();
+
+        // Should resolve to absolute path
+        const result = service.validateReferenceAudioPath(testAudioPath);
+        expect(result).toBe(testAudioPath);
+
+        // Should handle relative paths
+        expect(() =>
+          service.validateReferenceAudioPath("./test-reference.wav")
+        ).not.toThrow();
+
+        // Should reject non-existent files
+        expect(() =>
+          service.validateReferenceAudioPath("/nonexistent/file.wav")
+        ).toThrow("Reference audio file not found");
+
+        // Should reject unsupported formats
+        mockFs.existsSync.mockReturnValue(true);
+        expect(() =>
+          service.validateReferenceAudioPath("/home/user/document.txt")
+        ).toThrow("Unsupported reference audio format");
+      });
+
+      it("should validate audio paths correctly", () => {
+        const service = new ChatterboxService();
+        const serviceAny = service as any; // Type assertion to access private methods
+        const testPath = path.join(os.tmpdir(), "test-audio.wav");
+        fs.writeFileSync(testPath, ""); // Create temp file
+
+        // Create a mock synthesize call to access the private methods
+        try {
+          service.synthesize("test", {});
+        } catch (e) {
+          // Ignore - we just want to access the methods
+        }
+
+        // Test valid path
+        expect(service.validateAudioPath(testPath)).toBe(testPath);
+
+        // Test path traversal
+        expect(() => serviceAny.validateAudioPath("../../etc/passwd")).toThrow(
+          "Path traversal detected"
+        );
+
+        // Test sensitive directory (Linux)
+        expect(() => serviceAny.validateAudioPath("/etc/passwd")).toThrow(
+          "Access to sensitive directory (/etc) blocked"
+        );
+
+        // Test sensitive directory (Windows)
+        expect(() =>
+          serviceAny.validateAudioPath("C:\\Windows\\system.ini")
+        ).toThrow("Access to sensitive directory (C:\\Windows) blocked");
+
+        // Test non-existent file
+        expect(() => serviceAny.validateAudioPath("non-existent.wav")).toThrow(
+          "File not found"
+        );
+
+        // Test directory instead of file
+        const tempDir = os.tmpdir();
+        expect(() => serviceAny.validateAudioPath(tempDir)).toThrow(
+          "Path is not a file"
+        );
+
+        // Test invalid extension
+        const invalidFile = path.join(os.tmpdir(), "invalid.txt");
+        fs.writeFileSync(invalidFile, "");
+        expect(() => serviceAny.validateAudioPath(invalidFile)).toThrow(
+          "Unsupported audio format"
+        );
+
+        // Cleanup
+        fs.unlinkSync(testPath);
+        fs.unlinkSync(invalidFile);
+      });
+
+      it("should block malicious paths in reference audio", async () => {
+        // Mock a complete process with all event handlers
+        const mockProcess = {
+          stderr: { on: jest.fn() },
+          stdout: { on: jest.fn() },
+          on: jest.fn((event, callback) => {
+            if (event === "close") {
+              setTimeout(() => callback(0), 10);
+            }
+          }),
+        };
+        mockSpawn.mockReturnValue(mockProcess);
+        mockFs.existsSync.mockImplementation((p: fs.PathLike) =>
+          p.toString().includes("malicious") ? false : true
+        );
+
+        const service = new ChatterboxService();
+
+        // Should not throw but should log warning
+        await service.synthesize("Test", {
+          referenceAudio: "../../etc/passwd",
+        });
+
+        const args = mockSpawn.mock.calls[0][1];
+        const refAudioIndex = args.indexOf("--reference_audio") + 1;
+        expect(args[refAudioIndex]).toBe("");
+      });
     });
   });
 
@@ -100,6 +295,7 @@ describe("ChatterboxService", () => {
       // Mock successful Python process
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             // Simulate successful completion
@@ -122,6 +318,7 @@ describe("ChatterboxService", () => {
       // Mock failed Python process
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             // Simulate failure
@@ -141,12 +338,15 @@ describe("ChatterboxService", () => {
     it("should validate and sanitize input parameters", async () => {
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             setTimeout(() => callback(0), 10);
           }
         }),
       };
+      mockProcess.stderr.on.mockImplementation(() => mockProcess);
+      mockProcess.stdout.on.mockImplementation(() => mockProcess);
 
       mockSpawn.mockReturnValue(mockProcess);
       mockFs.existsSync.mockReturnValue(true);
@@ -184,6 +384,7 @@ describe("ChatterboxService", () => {
 
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             setTimeout(() => callback(0), 10);
@@ -214,6 +415,7 @@ describe("ChatterboxService", () => {
 
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             setTimeout(() => callback(0), 10);
@@ -237,6 +439,7 @@ describe("ChatterboxService", () => {
 
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             setTimeout(() => callback(0), 10);
@@ -268,6 +471,7 @@ describe("ChatterboxService", () => {
 
       const mockProcess = {
         stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
         on: jest.fn((event, callback) => {
           if (event === "close") {
             setTimeout(() => callback(0), 10);

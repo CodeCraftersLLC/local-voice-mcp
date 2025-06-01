@@ -253,16 +253,18 @@ ElevenLabs-compatible text-to-speech endpoint.
 
 These environment variables can be used to set default values for TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
 
-- `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (default: empty)
+- `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac, default: empty)
 - `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
 - `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
+- `CHATTERBOX_OUTPUT_DIR`: Output directory for generated audio files (default: system temp + "local-voice-mcp")
 
 **Example:**
 
 ```bash
 # Set default TTS parameters via environment variables
-export CHATTERBOX_REFERENCE_AUDIO="./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav"
+# Reference audio can be anywhere on your system
+export CHATTERBOX_REFERENCE_AUDIO="/Users/john/Music/my-voice.wav"
 export CHATTERBOX_EXAGGERATION="0.5"
 export CHATTERBOX_CFG_WEIGHT="1.2"
 export CHATTERBOX_MAX_CHARACTERS="3000"
@@ -280,7 +282,7 @@ local-voice-mcp-server
       "command": "npx",
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
-        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
+        "CHATTERBOX_REFERENCE_AUDIO": "/Users/john/Music/my-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "3000"
