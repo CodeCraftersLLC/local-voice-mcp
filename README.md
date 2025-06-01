@@ -16,7 +16,8 @@ Note: the env variables are optional
         "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
-        "CHATTERBOX_MAX_CHARACTERS": "2000"
+        "CHATTERBOX_MAX_CHARACTERS": "2000",
+        "CHATTERBOX_PLAYBACK_VOLUME": "75"
       }
     }
   }
@@ -30,6 +31,7 @@ Note: the env variables are optional
 - **Text-to-Speech Synthesis**: High-quality voice synthesis using Chatterbox TTS
 - **Voice Cloning**: Support for reference audio for voice cloning
 - **Prosody Controls**: Adjustable exaggeration and configuration weights
+- **Volume Control**: Configurable audio playback volume with cross-platform support
 - **Robust File Management**: Automatic cleanup of temporary audio files
 - **Security**: Path validation and sanitization to prevent directory traversal
 - **Dual Mode Operation**: Run as MCP server or HTTP server
@@ -137,11 +139,12 @@ The audio file is saved to the temporary directory and can be played using any a
 
 ### `play_audio`
 
-Play an audio file using the system's default audio player.
+Play an audio file using the system's default audio player with optional volume control.
 
 **Parameters:**
 
 - `audioFile` (string, required): Path to the audio file to play
+- `volume` (number, optional): Playback volume as percentage (0-100). If not specified, uses CHATTERBOX_PLAYBACK_VOLUME environment variable or default of 50.
 
 **Supported Formats:**
 
@@ -159,17 +162,19 @@ Play an audio file using the system's default audio player.
   "success": true,
   "message": "Successfully played audio file: /tmp/local-voice-mcp/audio_123.wav",
   "audioFile": "/tmp/local-voice-mcp/audio_123.wav",
+  "volume": 50,
   "platform": "darwin",
-  "command": "afplay /tmp/local-voice-mcp/audio_123.wav",
+  "command": "afplay -v 0.5 /tmp/local-voice-mcp/audio_123.wav",
   "timestamp": "2024-01-15T10:30:00.000Z"
 }
 ```
 
 **Platform Support:**
 
-- **macOS**: Uses `afplay` command
-- **Windows**: Uses PowerShell with `Media.SoundPlayer`
-- **Linux**: Uses `aplay` command
+- **Cross-platform**: Prefers `ffplay` (from ffmpeg) for consistent volume control across all platforms
+- **macOS**: Falls back to `afplay` command with `-v` volume flag
+- **Windows**: Falls back to PowerShell with `MediaPlayer` and volume control
+- **Linux**: Falls back to `mpg123` (MP3) with gain control or `aplay` (WAV, no volume control)
 
 ### `tts_status`
 
@@ -258,6 +263,7 @@ These environment variables can be used to set default values for TTS synthesis.
 - `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
 - `CHATTERBOX_OUTPUT_DIR`: Output directory for generated audio files (default: system temp + "local-voice-mcp")
+- `CHATTERBOX_PLAYBACK_VOLUME`: Default audio playback volume as percentage (integer, 0-100, default: 50)
 
 **Example:**
 
@@ -268,6 +274,7 @@ export CHATTERBOX_REFERENCE_AUDIO="/Users/john/Music/my-voice.wav"
 export CHATTERBOX_EXAGGERATION="0.5"
 export CHATTERBOX_CFG_WEIGHT="1.2"
 export CHATTERBOX_MAX_CHARACTERS="3000"
+export CHATTERBOX_PLAYBACK_VOLUME="75"
 
 # Run the MCP server with these defaults
 local-voice-mcp-server
@@ -285,7 +292,8 @@ local-voice-mcp-server
         "CHATTERBOX_REFERENCE_AUDIO": "/Users/john/Music/my-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
-        "CHATTERBOX_MAX_CHARACTERS": "3000"
+        "CHATTERBOX_MAX_CHARACTERS": "3000",
+        "CHATTERBOX_PLAYBACK_VOLUME": "75"
       }
     }
   }
@@ -294,7 +302,7 @@ local-voice-mcp-server
 
 **Priority Order:**
 
-1. Options passed to the `synthesize_text` tool (highest priority)
+1. Options passed to the `synthesize_text` or `play_audio` tools (highest priority)
 2. Environment variables
 3. Built-in defaults (lowest priority)
 
@@ -390,8 +398,14 @@ Once Cursor is restarted, you can test the TTS functionality:
    ```
 
 5. **Test audio playback**:
+
    ```
    Play the audio file that was just generated
+   ```
+
+6. **Test volume control**:
+   ```
+   Play the audio file at 25% volume
    ```
 
 ### 5. Verify the Tools Are Available

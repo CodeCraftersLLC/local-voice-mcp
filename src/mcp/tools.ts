@@ -236,20 +236,54 @@ export class TTSTools {
   /**
    * Play an audio file using the system's default audio player
    */
-  async playAudio(params: { audioFile: string }): Promise<{
+  async playAudio(params: { audioFile: string; volume?: number }): Promise<{
     content: Array<{
       type: "text";
       text: string;
     }>;
     isError?: boolean;
   }> {
-    const { audioFile: rawAudioFile } = params; // Rename to distinguish from resolved path
+    const { audioFile: rawAudioFile, volume: rawVolume } = params; // Rename to distinguish from resolved path
 
     if (!rawAudioFile || rawAudioFile.trim().length === 0) {
       return createErrorResponse(
         "Invalid input",
         "Audio file path is required and cannot be empty"
       );
+    }
+
+    // Validate and resolve volume parameter
+    let volume: number;
+    if (rawVolume !== undefined) {
+      // Validate volume parameter
+      if (
+        typeof rawVolume !== "number" ||
+        !Number.isInteger(rawVolume) ||
+        rawVolume < 0 ||
+        rawVolume > 100
+      ) {
+        return createErrorResponse(
+          "Invalid Volume",
+          `Volume must be an integer between 0 and 100. Provided: ${rawVolume}`
+        );
+      }
+      volume = rawVolume;
+    } else {
+      // Use environment variable or default
+      const envVolume = process.env.CHATTERBOX_PLAYBACK_VOLUME;
+      if (envVolume) {
+        const parsedVolume = parseInt(envVolume, 10);
+        if (isNaN(parsedVolume) || parsedVolume < 0 || parsedVolume > 100) {
+          logger.warn(
+            `Invalid CHATTERBOX_PLAYBACK_VOLUME: ${envVolume}. Using default volume 50.`
+          );
+          volume = 50;
+        } else {
+          volume = parsedVolume;
+        }
+      } else {
+        volume = 50; // Default volume
+      }
     }
 
     let resolvedPathToPlay: string;
@@ -326,43 +360,88 @@ export class TTSTools {
 
       const fileArg = resolvedPathToPlay; // Use the fully resolved, validated path
 
-      if (process.platform === "darwin") {
-        command = "afplay";
-        args = [fileArg];
-      } else if (process.platform === "win32") {
-        command = "powershell";
-        // For PowerShell, ensure paths with spaces are handled.
-        // Using [System.IO.Path]::GetFullPath('') helps PowerShell resolve, but we already have an absolute path.
-        // The single quotes and doubling internal single quotes is a common PowerShell string escaping.
-        const psScript = `
-          Add-Type -AssemblyName PresentationCore;
-          $player = New-Object System.Windows.Media.MediaPlayer;
-          $player.Open([System.Uri]::new('${fileArg.replace(/'/g, "''")}'));
-          $player.Play();
-          while ($player.Source -ne $null -and $player.Position -lt $player.NaturalDuration) { Start-Sleep -Milliseconds 200 };
-        `;
-        args = [
-          "-NoProfile",
-          "-NonInteractive",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-Command",
-          psScript,
-        ];
+      // Try ffplay first for cross-platform consistency and volume control
+      // ffplay is part of ffmpeg and widely available
+      const tryFFPlay = async (): Promise<{
+        command: string;
+        args: string[];
+      } | null> => {
+        return new Promise((resolve) => {
+          const testProcess = spawn("ffplay", ["-version"], {
+            stdio: "ignore",
+          });
+          testProcess.on("close", (code: number | null) => {
+            if (code === 0) {
+              // ffplay is available, use it with volume control
+              resolve({
+                command: "ffplay",
+                args: [
+                  "-volume",
+                  volume.toString(),
+                  "-nodisp",
+                  "-autoexit",
+                  fileArg,
+                ],
+              });
+            } else {
+              resolve(null);
+            }
+          });
+          testProcess.on("error", () => {
+            resolve(null);
+          });
+        });
+      };
+
+      // Try ffplay first
+      const ffplayResult = await tryFFPlay();
+      if (ffplayResult) {
+        command = ffplayResult.command;
+        args = ffplayResult.args;
       } else {
-        // Linux
-        // Prefer ffplay if available, as it's more versatile. Fallback to aplay/mpg123.
-        // This part might need adjustment based on what's commonly installed.
-        // For simplicity, sticking to your original logic but using the full path.
-        if (ext === ".mp3") {
-          command = "mpg123"; // You might want to add -q for quiet
-          args = ["-q", fileArg];
+        // Fallback to platform-specific commands with volume support where possible
+        if (process.platform === "darwin") {
+          command = "afplay";
+          // afplay volume: -v flag, range 0.0 to 1.0+
+          const volumeFloat = volume / 100;
+          args = ["-v", volumeFloat.toString(), fileArg];
+        } else if (process.platform === "win32") {
+          command = "powershell";
+          // For PowerShell, ensure paths with spaces are handled and add volume control
+          const volumeFloat = volume / 100;
+          const psScript = `
+            Add-Type -AssemblyName PresentationCore;
+            $player = New-Object System.Windows.Media.MediaPlayer;
+            $player.Volume = ${volumeFloat};
+            $player.Open([System.Uri]::new('${fileArg.replace(/'/g, "''")}'));
+            $player.Play();
+            while ($player.Source -ne $null -and $player.Position -lt $player.NaturalDuration) { Start-Sleep -Milliseconds 200 };
+          `;
+          args = [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            psScript,
+          ];
         } else {
-          // .wav
-          command = "aplay"; // You might want to add -q for quiet
-          args = ["-q", fileArg];
+          // Linux fallback - limited volume control
+          if (ext === ".mp3") {
+            command = "mpg123";
+            // mpg123 uses --gain for volume in dB. Convert percentage to rough dB.
+            // 50% = 0dB, 100% = +6dB, 0% = -20dB (approximate)
+            const gainDb = volume === 0 ? -20 : (volume - 50) * 0.12;
+            args = ["-q", "--gain", gainDb.toFixed(1), fileArg];
+          } else {
+            // .wav - aplay doesn't have volume control, use as-is
+            command = "aplay";
+            args = ["-q", fileArg];
+            logger.warn(
+              `Volume control not available for aplay. Playing at system volume. Requested volume: ${volume}%`
+            );
+          }
         }
-        // A more robust Linux approach might try `ffplay -nodisp -autoexit` or `paplay`
       }
 
       return new Promise((resolve) => {
@@ -387,6 +466,7 @@ export class TTSTools {
                       success: true,
                       message: `Successfully played audio file: ${rawAudioFile}`,
                       audioFile: rawAudioFile,
+                      volume: volume,
                       platform: process.platform,
                       command: `${command} ${args.join(" ")}`,
                       timestamp: new Date().toISOString(),
@@ -543,7 +623,7 @@ const synthesizeTextTool: Tool = {
 const playAudioTool: Tool = {
   name: "play_audio",
   description:
-    "Play an audio file using the system's default audio player. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
+    "Play an audio file using the system's default audio player with optional volume control. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
   inputSchema: {
     type: "object",
     properties: {
@@ -551,6 +631,13 @@ const playAudioTool: Tool = {
         type: "string",
         description:
           "Path to the audio file to play. Must be a .wav or .mp3 file in the temporary directory.",
+      },
+      volume: {
+        type: "number",
+        description:
+          "Playback volume as a percentage (0-100). If not specified, uses CHATTERBOX_PLAYBACK_VOLUME environment variable or default of 50.",
+        minimum: 0,
+        maximum: 100,
       },
     },
     required: ["audioFile"],
@@ -590,6 +677,7 @@ export const TTSToolSchemas = {
   },
   playAudio: {
     audioFile: z.string().min(1, "Audio file path cannot be empty"),
+    volume: z.number().min(0).max(100).optional(),
   },
   getStatus: {},
 };

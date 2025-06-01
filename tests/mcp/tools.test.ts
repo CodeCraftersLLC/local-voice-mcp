@@ -313,7 +313,91 @@ describe("TTSTools", () => {
       expect(response.success).toBe(true);
       expect(response.message).toContain("Successfully played audio file");
       expect(response.audioFile).toBe(audioFile);
+      expect(response.volume).toBe(50); // Default volume
       expect(response.platform).toBe(process.platform);
+    });
+
+    it("should play audio file with custom volume", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile, volume: 75 });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.volume).toBe(75);
+    });
+
+    it("should use environment variable for volume when not specified", async () => {
+      const originalEnv = process.env.CHATTERBOX_PLAYBACK_VOLUME;
+      process.env.CHATTERBOX_PLAYBACK_VOLUME = "25";
+
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.volume).toBe(25);
+
+      // Restore original environment
+      if (originalEnv !== undefined) {
+        process.env.CHATTERBOX_PLAYBACK_VOLUME = originalEnv;
+      } else {
+        delete process.env.CHATTERBOX_PLAYBACK_VOLUME;
+      }
+    });
+
+    it("should reject invalid volume values", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+
+      // Test volume too low
+      let result = await ttsTools.playAudio({ audioFile, volume: -1 });
+      expect("isError" in result && result.isError).toBe(true);
+      let errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
+
+      // Test volume too high
+      result = await ttsTools.playAudio({ audioFile, volume: 101 });
+      expect("isError" in result && result.isError).toBe(true);
+      errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
+
+      // Test non-integer volume
+      result = await ttsTools.playAudio({ audioFile, volume: 50.5 });
+      expect("isError" in result && result.isError).toBe(true);
+      errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
     });
 
     it("should reject empty audio file path", async () => {
@@ -453,10 +537,12 @@ describe("TTSToolSchemas", () => {
     it("should validate correct parameters", () => {
       const validParams = {
         audioFile: "/tmp/test.wav",
+        volume: 75,
       };
 
       expect(() => {
         TTSToolSchemas.playAudio.audioFile.parse(validParams.audioFile);
+        TTSToolSchemas.playAudio.volume?.parse(validParams.volume);
       }).not.toThrow();
     });
 
@@ -464,6 +550,24 @@ describe("TTSToolSchemas", () => {
       expect(() => {
         TTSToolSchemas.playAudio.audioFile.parse("");
       }).toThrow();
+    });
+
+    it("should reject invalid volume values", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(-1);
+      }).toThrow();
+
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(101);
+      }).toThrow();
+    });
+
+    it("should accept valid volume values", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(0);
+        TTSToolSchemas.playAudio.volume?.parse(50);
+        TTSToolSchemas.playAudio.volume?.parse(100);
+      }).not.toThrow();
     });
   });
 });
