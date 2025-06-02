@@ -2,12 +2,12 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { TTSTools, ALL_TOOLS, executeToolAndHandleErrors } from "./tools.js";
+import { TTSTools, ALL_TOOLS, executeToolAndHandleErrors } from "./tools";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { logger } from "../utils/logger.js";
+import { logger } from "../utils/logger";
 
 let version = "0.0.0-dev";
 try {
@@ -45,9 +45,12 @@ const shutdownHook = async () => {
     // The Server class doesn't have a disconnect method, so we just log closure
     logger.info("MCP server closed");
   } catch (error) {
-    logger.error("Error closing MCP server:", error instanceof Error ? error.message : "Unknown error");
+    logger.error(
+      "Error closing MCP server:",
+      error instanceof Error ? error.message : "Unknown error"
+    );
   }
-  
+
   logger.info("Cleaning up Chatterbox resources...");
   // Clean up Chatterbox resources (if needed)
   // Currently no explicit cleanup needed, but leaving as placeholder
@@ -121,27 +124,30 @@ if (require.main === module) {
   });
 
   // Setup signal handlers for graceful shutdown
-  const shutdownSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
-  shutdownSignals.forEach(signal => {
+  const shutdownSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+  shutdownSignals.forEach((signal) => {
     process.on(signal, async () => {
       if (shutdownInProgress) return;
       shutdownInProgress = true;
-      
+
       logger.info(`Shutting down due to ${signal}...`);
-      
+
       // Set timeout for forced shutdown
       const forceShutdownTimer = setTimeout(() => {
         logger.error("Forced shutdown after 10 seconds");
         process.exit(1);
       }, 10000);
-      
+
       try {
         await shutdownHook();
         clearTimeout(forceShutdownTimer);
         logger.info("Server shut down gracefully.");
         process.exit(0);
       } catch (error) {
-        logger.error("Error during shutdown:", error instanceof Error ? error.message : "Unknown error");
+        logger.error(
+          "Error during shutdown:",
+          error instanceof Error ? error.message : "Unknown error"
+        );
         process.exit(1);
       }
     });
