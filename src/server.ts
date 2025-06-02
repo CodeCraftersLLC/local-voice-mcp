@@ -208,7 +208,11 @@ export async function startApp(port: number): Promise<void> {
       resolve();
     });
     serverInstance.on("error", (err) => {
-      logger.error("Server failed to start:", err.message);
+      if ((err as any).code === 'EADDRINUSE') {
+        logger.error(`Port ${port} is already in use. Please choose a different port.`);
+      } else {
+        logger.error("Server failed to start:", err.message);
+      }
       reject(err);
     });
   });

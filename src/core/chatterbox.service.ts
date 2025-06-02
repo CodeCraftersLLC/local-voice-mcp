@@ -107,29 +107,26 @@ export class ChatterboxService {
       throw new Error("Reference audio path must be a non-empty string");
     }
 
-    // Resolve to absolute path to handle relative paths properly
-    const resolvedPath = path.resolve(filePath);
-
-    // Basic security: prevent obvious path traversal attempts in the original input
-    // Note: We don't block .. in the resolved path since users should be able to
-    // access files anywhere in their system using legitimate relative paths
-    if (filePath.includes("../") || filePath.includes("..\\")) {
-      logger.warn(
-        `Potential path traversal attempt in reference audio: ${filePath}`
-      );
+    // Security: Prevent path traversal attacks by disallowing parent directory sequences
+    if (filePath.includes("..")) {
+      throw new Error("Path traversal sequences (..) are not allowed in reference audio paths");
     }
 
+    // Resolve to absolute path to handle relative paths properly
+    const resolvedPath = path.resolve(filePath);
+    const normalizedPath = path.normalize(resolvedPath);
+
     // Check if file exists
-    if (!fs.existsSync(resolvedPath)) {
+    if (!fs.existsSync(normalizedPath)) {
       throw new Error(
-        `Reference audio file not found: ${filePath} (resolved to: ${resolvedPath})`
+        `Reference audio file not found: ${filePath} (resolved to: ${normalizedPath})`
       );
     }
 
     // Check if it's actually a file
     let stats;
     try {
-      stats = fs.statSync(resolvedPath);
+      stats = fs.statSync(normalizedPath);
     } catch (error) {
       throw new Error(
         `Cannot access reference audio file: ${filePath}. Error: ${
@@ -140,12 +137,12 @@ export class ChatterboxService {
 
     if (!stats.isFile()) {
       throw new Error(
-        `Reference audio path is not a file: ${filePath} (resolved to: ${resolvedPath})`
+        `Reference audio path is not a file: ${filePath} (resolved to: ${normalizedPath})`
       );
     }
 
     // Validate file extension
-    const ext = path.extname(resolvedPath).toLowerCase();
+    const ext = path.extname(normalizedPath).toLowerCase();
     const allowedExtensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"];
     if (!allowedExtensions.includes(ext)) {
       throw new Error(
@@ -155,8 +152,8 @@ export class ChatterboxService {
       );
     }
 
-    logger.log(`Validated reference audio file: ${resolvedPath}`);
-    return resolvedPath;
+    logger.log(`Validated reference audio file: ${normalizedPath}`);
+    return normalizedPath;
   }
 
   async synthesize(text: string, options: any): Promise<string> {
@@ -255,6 +252,9 @@ export class ChatterboxService {
         reject(error);
       });
 
+      const startTime = Date.now();
+      logger.log("TTS process started. Waiting for completion...");
+
       childProcess.on("close", (code) => {
         const duration = Date.now() - startTime;
         logger.log(`TTS process closed with code ${code} after ${duration}ms`);
@@ -272,9 +272,6 @@ export class ChatterboxService {
           reject(new Error("TTS synthesis failed"));
         }
       });
-
-      const startTime = Date.now();
-      logger.log("TTS process started. Waiting for completion...");
     });
   }
 }

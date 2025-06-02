@@ -445,8 +445,21 @@ export class TTSTools {
       }
 
       return new Promise((resolve) => {
+        const PLAYBACK_TIMEOUT = 30000; // 30 seconds
+        let timeoutId: NodeJS.Timeout;
+        
         logger.info(`Executing playback: ${command} ${args.join(" ")}`);
         const player = spawn(command, args);
+        
+        timeoutId = setTimeout(() => {
+          player.kill('SIGTERM');
+          resolve(
+            createErrorResponse(
+              "Playback Timeout",
+              `Audio playback timed out after ${PLAYBACK_TIMEOUT/1000} seconds`
+            )
+          );
+        }, PLAYBACK_TIMEOUT);
 
         let stderrOutput = "";
         if (player.stderr) {
@@ -456,6 +469,7 @@ export class TTSTools {
         }
 
         player.on("close", (code: number) => {
+          clearTimeout(timeoutId);
           if (code === 0) {
             resolve({
               content: [
@@ -496,6 +510,7 @@ export class TTSTools {
         });
 
         player.on("error", (err: Error) => {
+          clearTimeout(timeoutId);
           logger.error(
             `Failed to start playback for "${fileArg}". Command: ${command}. Error: ${err.message}`
           );
