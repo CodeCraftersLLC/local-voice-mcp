@@ -1,0 +1,573 @@
+import { TTSTools, TTSToolSchemas } from "../../src/mcp/tools";
+import fs from "fs";
+import path from "path";
+
+// Mock the ChatterboxService
+jest.mock("../../src/core/chatterbox.service", () => ({
+  ChatterboxService: jest.fn().mockImplementation(() => ({
+    ensureReady: jest.fn().mockResolvedValue(undefined),
+    synthesize: jest.fn(),
+    validateReferenceAudioPath: jest.fn(),
+  })),
+}));
+
+// Mock fs operations
+jest.mock("fs", () => ({
+  ...jest.requireActual("fs"),
+  existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  statSync: jest.fn(),
+}));
+
+const mockFs = fs as jest.Mocked<typeof fs>;
+
+describe("TTSTools", () => {
+  let ttsTools: TTSTools;
+  let mockChatterbox: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    ttsTools = new TTSTools();
+    mockChatterbox = (ttsTools as any).chatterbox;
+
+    // Mock file system operations
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.mkdirSync.mockReturnValue(undefined);
+  });
+
+  describe("ensureReady", () => {
+    it("should call chatterbox ensureReady", async () => {
+      await ttsTools.ensureReady();
+      expect(mockChatterbox.ensureReady).toHaveBeenCalled();
+    });
+  });
+
+  describe("synthesizeText", () => {
+    it("should synthesize text successfully", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      const result = await ttsTools.synthesizeText({
+        text: "Hello world",
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe("text");
+
+      // Parse the JSON response
+      const textResponse = JSON.parse(result.content[0].text!);
+      expect(textResponse.success).toBe(true);
+      expect(textResponse.message).toBe(
+        "Speech synthesis completed successfully"
+      );
+      expect(textResponse.audioFormat).toBe("wav");
+      expect(textResponse.audioFile).toBe(mockAudioPath);
+      expect(textResponse.textLength).toBe(11);
+
+      // File should NOT be deleted in the new approach - no cleanup in simplified version
+    });
+
+    it("should handle synthesis with options", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      // Create a valid reference audio file path for testing
+      const refAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "test-ref.wav"
+      );
+
+      // Mock the ChatterboxService's validateReferenceAudioPath method to return the path
+      mockChatterbox.validateReferenceAudioPath.mockReturnValue(refAudioPath);
+
+      await ttsTools.synthesizeText({
+        text: "Hello world",
+        referenceAudio: refAudioPath,
+        exaggeration: 0.5,
+        cfg_weight: 1.2,
+      });
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith("Hello world", {
+        referenceAudio: refAudioPath, // Should be the resolved path
+        exaggeration: 0.5,
+        cfg_weight: 1.2,
+      });
+    });
+
+    it("should handle reference audio from anywhere in the system", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      // Test with a reference audio file in user's home directory
+      const homeDir = require("os").homedir();
+      const userRefAudioPath = require("path").join(
+        homeDir,
+        "Music",
+        "my-voice.wav"
+      );
+
+      // Mock the ChatterboxService's validateReferenceAudioPath method to return the path
+      mockChatterbox.validateReferenceAudioPath.mockReturnValue(
+        userRefAudioPath
+      );
+
+      const result = await ttsTools.synthesizeText({
+        text: "Hello from my custom voice!",
+        referenceAudio: userRefAudioPath,
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        "Hello from my custom voice!",
+        {
+          referenceAudio: userRefAudioPath, // Should allow system-wide paths
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
+    });
+
+    it("should handle text with punctuation", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      const result = await ttsTools.synthesizeText({
+        text: "Hello, world! How are you? I'm doing great!",
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        "Hello, world! How are you? I'm doing great!",
+        {
+          referenceAudio: undefined,
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
+    });
+
+    it("should handle text with various punctuation marks", async () => {
+      const mockAudioPath = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test-audio.wav"
+      );
+      mockChatterbox.synthesize.mockResolvedValue(mockAudioPath);
+
+      const textWithPunctuation =
+        "Price: $10.99! Email@example.com? Math: 2+2=4. Text with (parentheses) and [brackets].";
+
+      const result = await ttsTools.synthesizeText({
+        text: textWithPunctuation,
+      });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain(
+        "Speech synthesis completed successfully"
+      );
+
+      expect(mockChatterbox.synthesize).toHaveBeenCalledWith(
+        textWithPunctuation,
+        {
+          referenceAudio: undefined,
+          exaggeration: 0.2,
+          cfg_weight: 1.0,
+        }
+      );
+    });
+
+    it("should reject empty text", async () => {
+      const result = await ttsTools.synthesizeText({ text: "" });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Text parameter is required and cannot be empty"
+      );
+    });
+
+    it("should reject whitespace-only text", async () => {
+      const result = await ttsTools.synthesizeText({ text: "   " });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Text parameter is required and cannot be empty"
+      );
+    });
+
+    it("should handle synthesis errors", async () => {
+      mockChatterbox.synthesize.mockRejectedValue(
+        new Error("Synthesis failed")
+      );
+
+      const result = await ttsTools.synthesizeText({ text: "Hello world" });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain("Synthesis failed");
+    });
+
+    it("should validate audio path security", async () => {
+      // Mock a path outside the temp directory
+      const maliciousPath = "/etc/passwd";
+      mockChatterbox.synthesize.mockResolvedValue(maliciousPath);
+
+      const result = await ttsTools.synthesizeText({ text: "Hello world" });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain("Invalid audio path generated");
+    });
+  });
+
+  describe("playAudio", () => {
+    let mockSpawn: jest.SpyInstance;
+
+    beforeEach(() => {
+      // Mock spawn for audio playback
+      mockSpawn = jest
+        .spyOn(require("child_process"), "spawn")
+        .mockImplementation(() => {
+          const mockProcess = {
+            on: jest.fn((event, callback) => {
+              if (event === "close") {
+                // Immediately call the callback with success code
+                callback(0);
+              }
+            }),
+          };
+          return mockProcess;
+        });
+    });
+
+    afterEach(() => {
+      mockSpawn.mockRestore();
+    });
+
+    it("should play audio file successfully", async () => {
+      // Use a path in the temporary directory which should pass security validation
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.message).toContain("Successfully played audio file");
+      expect(response.audioFile).toBe(audioFile);
+      expect(response.volume).toBe(50); // Default volume
+      expect(response.platform).toBe(process.platform);
+    });
+
+    it("should play audio file with custom volume", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile, volume: 75 });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.volume).toBe(75);
+    });
+
+    it("should use environment variable for volume when not specified", async () => {
+      const originalEnv = process.env.CHATTERBOX_PLAYBACK_VOLUME;
+      process.env.CHATTERBOX_PLAYBACK_VOLUME = "25";
+
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile });
+
+      expect(result.content).toHaveLength(1);
+      expect(!("isError" in result) || !result.isError).toBe(true);
+
+      const response = JSON.parse(result.content[0].text!);
+      expect(response.success).toBe(true);
+      expect(response.volume).toBe(25);
+
+      // Restore original environment
+      if (originalEnv !== undefined) {
+        process.env.CHATTERBOX_PLAYBACK_VOLUME = originalEnv;
+      } else {
+        delete process.env.CHATTERBOX_PLAYBACK_VOLUME;
+      }
+    });
+
+    it("should reject invalid volume values", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.wav"
+      );
+
+      // Test volume too low
+      let result = await ttsTools.playAudio({ audioFile, volume: -1 });
+      expect("isError" in result && result.isError).toBe(true);
+      let errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
+
+      // Test volume too high
+      result = await ttsTools.playAudio({ audioFile, volume: 101 });
+      expect("isError" in result && result.isError).toBe(true);
+      errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
+
+      // Test non-integer volume
+      result = await ttsTools.playAudio({ audioFile, volume: 50.5 });
+      expect("isError" in result && result.isError).toBe(true);
+      errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain(
+        "Volume must be an integer between 0 and 100"
+      );
+    });
+
+    it("should reject empty audio file path", async () => {
+      const result = await ttsTools.playAudio({ audioFile: "" });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain("Audio file path is required");
+    });
+
+    it("should reject non-existent file", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "nonexistent.wav"
+      );
+      mockFs.existsSync.mockReturnValue(false);
+
+      const result = await ttsTools.playAudio({ audioFile });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain("Audio file does not exist");
+    });
+
+    it("should reject unsupported file format", async () => {
+      const audioFile = require("path").join(
+        require("os").tmpdir(),
+        "local-voice-mcp",
+        "test.txt"
+      );
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+      const result = await ttsTools.playAudio({ audioFile });
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.message).toContain("Unsupported audio format");
+    });
+  });
+
+  describe("getStatus", () => {
+    it("should return operational status when ready", async () => {
+      const result = await ttsTools.getStatus();
+
+      expect(result.content).toHaveLength(1);
+      expect(result.isError).toBeUndefined();
+
+      const statusResponse = JSON.parse(result.content[0].text!);
+      expect(statusResponse.success).toBe(true);
+      expect(statusResponse.status).toBe("operational");
+      expect(statusResponse.message).toBe(
+        "TTS service is ready and operational"
+      );
+      expect(statusResponse.service.name).toBe("Chatterbox TTS");
+    });
+
+    it("should return error status when not ready", async () => {
+      mockChatterbox.ensureReady.mockRejectedValue(
+        new Error("Service not ready")
+      );
+
+      const result = await ttsTools.getStatus();
+
+      expect(result.content).toHaveLength(1);
+      expect("isError" in result && result.isError).toBe(true);
+
+      const errorResponse = JSON.parse(result.content[0].text!);
+      expect(errorResponse.success).toBe(false);
+      expect(errorResponse.status).toBe("error");
+      expect(errorResponse.message).toBe("TTS service is not ready");
+      expect(errorResponse.error).toContain("Service not ready");
+    });
+  });
+});
+
+describe("TTSToolSchemas", () => {
+  describe("synthesizeText schema", () => {
+    it("should validate correct parameters", () => {
+      const validParams = {
+        text: "Hello world",
+        referenceAudio: "ref.wav",
+        exaggeration: 0.5,
+        cfg_weight: 1.2,
+      };
+
+      expect(() => {
+        TTSToolSchemas.synthesizeText.text.parse(validParams.text);
+        TTSToolSchemas.synthesizeText.referenceAudio?.parse(
+          validParams.referenceAudio
+        );
+        TTSToolSchemas.synthesizeText.exaggeration?.parse(
+          validParams.exaggeration
+        );
+        TTSToolSchemas.synthesizeText.cfg_weight?.parse(validParams.cfg_weight);
+      }).not.toThrow();
+    });
+
+    it("should reject empty text", () => {
+      expect(() => {
+        TTSToolSchemas.synthesizeText.text.parse("");
+      }).toThrow();
+    });
+
+    it("should reject invalid exaggeration values", () => {
+      expect(() => {
+        TTSToolSchemas.synthesizeText.exaggeration?.parse(-1);
+      }).toThrow();
+
+      expect(() => {
+        TTSToolSchemas.synthesizeText.exaggeration?.parse(3);
+      }).toThrow();
+    });
+
+    it("should reject invalid cfg_weight values", () => {
+      expect(() => {
+        TTSToolSchemas.synthesizeText.cfg_weight?.parse(-1);
+      }).toThrow();
+
+      expect(() => {
+        TTSToolSchemas.synthesizeText.cfg_weight?.parse(6);
+      }).toThrow();
+    });
+  });
+
+  describe("playAudio schema", () => {
+    it("should validate correct parameters", () => {
+      const validParams = {
+        audioFile: "/tmp/test.wav",
+        volume: 75,
+      };
+
+      expect(() => {
+        TTSToolSchemas.playAudio.audioFile.parse(validParams.audioFile);
+        TTSToolSchemas.playAudio.volume?.parse(validParams.volume);
+      }).not.toThrow();
+    });
+
+    it("should reject empty audio file path", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.audioFile.parse("");
+      }).toThrow();
+    });
+
+    it("should reject invalid volume values", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(-1);
+      }).toThrow();
+
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(101);
+      }).toThrow();
+    });
+
+    it("should accept valid volume values", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.volume?.parse(0);
+        TTSToolSchemas.playAudio.volume?.parse(50);
+        TTSToolSchemas.playAudio.volume?.parse(100);
+      }).not.toThrow();
+    });
+  });
+});

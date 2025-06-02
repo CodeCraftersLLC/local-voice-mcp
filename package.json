@@ -1,25 +1,61 @@
 {
-  "name": "local-voice-mcp",
+  "name": "@codecraftersllc/local-voice-mcp",
   "version": "0.1.0",
-  "main": "index.js",
-  "author": "soyboyscout",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "ts-node src/server.ts"
+  "main": "dist/server.js",
+  "bin": {
+    "local-voice-mcp-server": "./dist/mcp-server.js"
   },
-  "keywords": [],
+  "author": "soyboyscout",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodeCraftersLLC/local-voice-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CodeCraftersLLC/local-voice-mcp/issues"
+  },
+  "homepage": "https://github.com/CodeCraftersLLC/local-voice-mcp#readme",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc",
+    "start": "ts-node src/server.ts",
+    "start:mcp": "npm run build && node dist/mcp-server.js",
+    "dev:mcp": "ts-node src/mcp-server.ts",
+    "dev:http": "MCP_MODE=http ts-node src/mcp-server.ts",
+    "prepublishOnly": "npm test && npm run build",
+    "version": "npm run build && git add -A dist",
+    "postversion": "git push && git push --tags"
+  },
+  "keywords": [
+    "mcp",
+    "tts",
+    "text-to-speech",
+    "voice",
+    "ai"
+  ],
   "license": "MIT",
   "description": "Give your MCP clients the ability to speak by running local voice models",
+  "files": [
+    "dist/",
+    "female-reference-voice.wav"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/node": "^22.15.24",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@types/body-parser": "^1.19.5",
     "@types/express": "^5.0.2",
     "axios": "^1.9.0",
     "body-parser": "^2.2.0",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "get-port": "^7.1.0",
+    "zod": "^3.25.42"
   }
 }
