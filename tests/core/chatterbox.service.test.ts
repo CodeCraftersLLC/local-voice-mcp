@@ -644,10 +644,16 @@ describe("ChatterboxService", () => {
         expect.arrayContaining([
           "--text",
           "Test text",
-          "--reference_audio",
-          "", // Should be empty when using male voice
+          "--exaggeration",
+          "0.2",
+          "--cfg_weight",
+          "1",
         ])
       );
+
+      // Should NOT contain --reference_audio when using male voice
+      const args = mockSpawn.mock.calls[0][1];
+      expect(args).not.toContain("--reference_audio");
     });
 
     it("should use bundled female voice when USE_MALE_VOICE is false", async () => {

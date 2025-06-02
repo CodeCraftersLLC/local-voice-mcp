@@ -261,13 +261,19 @@ export class ChatterboxService {
       this.sanitizeArg(text),
       "--output",
       outputFile,
-      "--reference_audio",
-      validatedReferenceAudio,
+    ];
+
+    // Only include --reference_audio if we have a valid reference audio file
+    if (validatedReferenceAudio) {
+      args.push("--reference_audio", validatedReferenceAudio);
+    }
+
+    args.push(
       "--exaggeration",
       String(exaggeration),
       "--cfg_weight",
-      String(cfgWeight),
-    ];
+      String(cfgWeight)
+    );
 
     logger.log("Python path:", this.pythonPath);
     logger.log("Script path:", this.scriptPath);

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.3] - 2025-01-02
+## [0.1.3] - 2025-06-01
 
 ### Added
 
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated README with examples showing how to use male voice option
 - Enhanced documentation to clarify voice selection behavior
 
-## [0.1.2] - 2025-01-02
+## [0.1.2] - 2025-06-01
 
 ### Added
 
@@ -39,13 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved issue where relative paths to reference audio files in npm package didn't work correctly
 - Improved reference audio path resolution using `__dirname` for reliable package-relative paths
 
-## [0.1.1] - 2025-01-02
+## [0.1.1] - 2025-06-01
 
 ### Fixed
 
 - Missing `scripts/` directory in published npm package causing "No such file or directory" errors when running the MCP server
 
-## [0.1.0] - 2024-01-XX
+## [0.1.0] - 2024-06-01
 
 ### Added
 
