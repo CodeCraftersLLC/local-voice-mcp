@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-01-02
+
+### Added
+
+- `USE_MALE_VOICE` environment variable to use default male voice instead of bundled female reference voice
+- Option to choose between bundled female voice (default) and default male voice without needing custom reference audio
+- Comprehensive test coverage for male/female voice selection functionality
+
+### Changed
+
+- Updated README with examples showing how to use male voice option
+- Enhanced documentation to clarify voice selection behavior
+
 ## [0.1.2] - 2025-01-02
 
 ### Added

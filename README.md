@@ -258,6 +258,7 @@ ElevenLabs-compatible text-to-speech endpoint.
 These environment variables can be used to set default values for TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
 
 - `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac). If not specified, uses the bundled high-quality female reference voice.
+- `USE_MALE_VOICE`: Use male voice instead of bundled female reference voice (true/false, default: false). When set to true, uses the default Chatterbox male voice instead of the bundled female voice. This only applies when no custom reference audio is specified.
 - `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
 - `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
@@ -293,6 +294,24 @@ local-voice-mcp-server
         "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "3000",
         "CHATTERBOX_PLAYBACK_VOLUME": "75"
+      }
+    }
+  }
+}
+```
+
+**Using male voice instead of bundled female voice:**
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
+      "env": {
+        "USE_MALE_VOICE": "true",
+        "CHATTERBOX_EXAGGERATION": "0.3",
+        "CHATTERBOX_CFG_WEIGHT": "1.0"
       }
     }
   }

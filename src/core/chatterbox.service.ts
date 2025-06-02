@@ -224,24 +224,33 @@ export class ChatterboxService {
     }
 
     // If no valid reference audio is specified, try to use the bundled reference audio
+    // unless USE_MALE_VOICE is set to true
     if (!validatedReferenceAudio) {
-      try {
-        if (fs.existsSync(this.bundledReferenceAudioPath)) {
-          validatedReferenceAudio = this.bundledReferenceAudioPath;
-          logger.log(
-            `Using bundled reference audio file: ${validatedReferenceAudio}`
-          );
-        } else {
+      const useMaleVoice = process.env.USE_MALE_VOICE === "true";
+
+      if (useMaleVoice) {
+        logger.log(
+          "USE_MALE_VOICE is enabled. Using default male voice instead of bundled female reference audio."
+        );
+      } else {
+        try {
+          if (fs.existsSync(this.bundledReferenceAudioPath)) {
+            validatedReferenceAudio = this.bundledReferenceAudioPath;
+            logger.log(
+              `Using bundled reference audio file: ${validatedReferenceAudio}`
+            );
+          } else {
+            logger.warn(
+              `Bundled reference audio not found at: ${this.bundledReferenceAudioPath}. Using default voice.`
+            );
+          }
+        } catch (error) {
           logger.warn(
-            `Bundled reference audio not found at: ${this.bundledReferenceAudioPath}. Using default voice.`
+            `Failed to access bundled reference audio: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }. Using default voice.`
           );
         }
-      } catch (error) {
-        logger.warn(
-          `Failed to access bundled reference audio: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }. Using default voice.`
-        );
       }
     }
 
