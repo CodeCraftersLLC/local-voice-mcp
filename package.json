@@ -1,6 +1,6 @@
 {
   "name": "@codecraftersllc/local-voice-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "dist/server.js",
   "bin": {
     "local-voice-mcp-server": "./dist/mcp-server.js"
@@ -36,6 +36,7 @@
   "description": "Give your MCP clients the ability to speak by running local voice models",
   "files": [
     "dist/",
+    "scripts/",
     "female-reference-voice.wav"
   ],
   "publishConfig": {
