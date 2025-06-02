@@ -51,6 +51,13 @@ describe("ChatterboxService", () => {
       chatterboxService = new ChatterboxService();
       expect(chatterboxService).toBeInstanceOf(ChatterboxService);
     });
+
+    it("should provide access to bundled reference audio path", () => {
+      chatterboxService = new ChatterboxService();
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      expect(bundledPath).toContain("female-reference-voice.wav");
+      expect(path.isAbsolute(bundledPath)).toBe(true);
+    });
   });
 
   describe("ensureReady", () => {
@@ -257,20 +264,25 @@ describe("ChatterboxService", () => {
           }),
         };
         mockSpawn.mockReturnValue(mockProcess);
-        mockFs.existsSync.mockImplementation((p: fs.PathLike) =>
-          p.toString().includes("malicious") ? false : true
-        );
 
         const service = new ChatterboxService();
+        const bundledPath = service.getBundledReferenceAudioPath();
 
-        // Should not throw but should log warning
+        mockFs.existsSync.mockImplementation((p: fs.PathLike) => {
+          const pathStr = p.toString();
+          return pathStr.includes("malicious")
+            ? false
+            : pathStr === bundledPath || pathStr.includes("local-voice-mcp");
+        });
+
+        // Should not throw but should log warning and fallback to bundled reference audio
         await service.synthesize("Test", {
           referenceAudio: "../../etc/passwd",
         });
 
         const args = mockSpawn.mock.calls[0][1];
         const refAudioIndex = args.indexOf("--reference_audio") + 1;
-        expect(args[refAudioIndex]).toBe("");
+        expect(args[refAudioIndex]).toBe(bundledPath);
       });
     });
   });
@@ -283,6 +295,7 @@ describe("ChatterboxService", () => {
       delete process.env.CHATTERBOX_EXAGGERATION;
       delete process.env.CHATTERBOX_CFG_WEIGHT;
       delete process.env.CHATTERBOX_MAX_CHARACTERS;
+      delete process.env.USE_MALE_VOICE;
     });
 
     afterEach(() => {
@@ -291,6 +304,7 @@ describe("ChatterboxService", () => {
       delete process.env.CHATTERBOX_EXAGGERATION;
       delete process.env.CHATTERBOX_CFG_WEIGHT;
       delete process.env.CHATTERBOX_MAX_CHARACTERS;
+      delete process.env.USE_MALE_VOICE;
     });
 
     it("should synthesize text successfully", async () => {
@@ -357,7 +371,12 @@ describe("ChatterboxService", () => {
       mockProcess.stdout.on.mockImplementation(() => mockProcess);
 
       mockSpawn.mockReturnValue(mockProcess);
-      mockFs.existsSync.mockReturnValue(true);
+
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
 
       await chatterboxService.synthesize("Test text", {
         referenceAudio: "test.wav",
@@ -371,7 +390,7 @@ describe("ChatterboxService", () => {
           "--text",
           "Test text",
           "--reference_audio",
-          "",
+          bundledPath,
           "--exaggeration",
           "0.5",
           "--cfg_weight",
@@ -460,7 +479,12 @@ describe("ChatterboxService", () => {
       };
 
       mockSpawn.mockReturnValue(mockProcess);
-      mockFs.existsSync.mockReturnValue(true);
+
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
 
       await chatterboxService.synthesize("Test text", {});
 
@@ -470,7 +494,7 @@ describe("ChatterboxService", () => {
           "--text",
           "Test text",
           "--reference_audio",
-          "",
+          bundledPath,
           "--exaggeration",
           "0.8",
           "--cfg_weight",
@@ -496,7 +520,12 @@ describe("ChatterboxService", () => {
       };
 
       mockSpawn.mockReturnValue(mockProcess);
-      mockFs.existsSync.mockReturnValue(true);
+
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
 
       await chatterboxService.synthesize("Test text", {
         referenceAudio: "option-reference.wav",
@@ -510,11 +539,198 @@ describe("ChatterboxService", () => {
           "--text",
           "Test text",
           "--reference_audio",
-          "",
+          bundledPath,
           "--exaggeration",
           "0.3",
           "--cfg_weight",
           "1.2",
+        ])
+      );
+    });
+
+    it("should use bundled reference audio when no reference audio is specified", async () => {
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      // Mock that the bundled reference audio exists
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
+
+      await chatterboxService.synthesize("Test text", {});
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "--text",
+          "Test text",
+          "--reference_audio",
+          bundledPath,
+        ])
+      );
+    });
+
+    it("should fallback to bundled reference audio when specified reference audio fails validation", async () => {
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      // Mock that the bundled reference audio exists but the specified one doesn't
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
+
+      await chatterboxService.synthesize("Test text", {
+        referenceAudio: "nonexistent.wav",
+      });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "--text",
+          "Test text",
+          "--reference_audio",
+          bundledPath,
+        ])
+      );
+    });
+
+    it("should use default male voice when USE_MALE_VOICE is true", async () => {
+      process.env.USE_MALE_VOICE = "true";
+
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
+
+      await chatterboxService.synthesize("Test text", {});
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "--text",
+          "Test text",
+          "--exaggeration",
+          "0.2",
+          "--cfg_weight",
+          "1",
+        ])
+      );
+
+      // Should NOT contain --reference_audio when using male voice
+      const args = mockSpawn.mock.calls[0][1];
+      expect(args).not.toContain("--reference_audio");
+    });
+
+    it("should use bundled female voice when USE_MALE_VOICE is false", async () => {
+      process.env.USE_MALE_VOICE = "false";
+
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const bundledPath = chatterboxService.getBundledReferenceAudioPath();
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return pathStr.includes("local-voice-mcp") || pathStr === bundledPath;
+      });
+
+      await chatterboxService.synthesize("Test text", {});
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "--text",
+          "Test text",
+          "--reference_audio",
+          bundledPath, // Should use bundled female voice
+        ])
+      );
+    });
+
+    it("should prioritize custom reference audio over USE_MALE_VOICE setting", async () => {
+      process.env.USE_MALE_VOICE = "true";
+
+      const mockProcess = {
+        stderr: { on: jest.fn() },
+        stdout: { on: jest.fn() },
+        on: jest.fn((event, callback) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 10);
+          }
+        }),
+      };
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const customAudioPath = "/Users/test/custom-voice.wav";
+      mockFs.existsSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        return (
+          pathStr.includes("local-voice-mcp") || pathStr === customAudioPath
+        );
+      });
+      mockFs.statSync.mockImplementation((filePath: any) => {
+        const pathStr = filePath.toString();
+        if (pathStr === customAudioPath) {
+          return { isFile: () => true } as any;
+        }
+        return { isFile: () => false } as any;
+      });
+
+      await chatterboxService.synthesize("Test text", {
+        referenceAudio: customAudioPath,
+      });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "--text",
+          "Test text",
+          "--reference_audio",
+          customAudioPath, // Should use custom audio even when USE_MALE_VOICE is true
         ])
       );
     });

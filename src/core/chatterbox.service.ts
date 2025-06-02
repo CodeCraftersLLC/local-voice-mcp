@@ -7,16 +7,29 @@ import { logger } from "../utils/logger";
 export class ChatterboxService {
   private pythonPath: string;
   private scriptPath: string;
+  private bundledReferenceAudioPath: string;
   private envReady: boolean = false;
 
   constructor() {
     this.pythonPath = this.resolvePythonPath();
     this.scriptPath = path.join(__dirname, "../../scripts/tts_runner.py");
+    this.bundledReferenceAudioPath = path.join(
+      __dirname,
+      "../../female-reference-voice.wav"
+    );
   }
 
   private resolvePythonPath(): string {
     // Implementation remains the same
     return "python3";
+  }
+
+  /**
+   * Get the path to the bundled reference audio file
+   * Public for testing purposes
+   */
+  public getBundledReferenceAudioPath(): string {
+    return this.bundledReferenceAudioPath;
   }
 
   async ensureReady(): Promise<void> {
@@ -204,9 +217,40 @@ export class ChatterboxService {
         const message =
           error instanceof Error ? error.message : "Unknown error";
         logger.warn(
-          `Reference audio validation failed: ${message}. Using default voice instead.`
+          `Reference audio validation failed: ${message}. Trying bundled reference audio.`
         );
         validatedReferenceAudio = "";
+      }
+    }
+
+    // If no valid reference audio is specified, try to use the bundled reference audio
+    // unless USE_MALE_VOICE is set to true
+    if (!validatedReferenceAudio) {
+      const useMaleVoice = process.env.USE_MALE_VOICE === "true";
+
+      if (useMaleVoice) {
+        logger.log(
+          "USE_MALE_VOICE is enabled. Using default male voice instead of bundled female reference audio."
+        );
+      } else {
+        try {
+          if (fs.existsSync(this.bundledReferenceAudioPath)) {
+            validatedReferenceAudio = this.bundledReferenceAudioPath;
+            logger.log(
+              `Using bundled reference audio file: ${validatedReferenceAudio}`
+            );
+          } else {
+            logger.warn(
+              `Bundled reference audio not found at: ${this.bundledReferenceAudioPath}. Using default voice.`
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to access bundled reference audio: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }. Using default voice.`
+          );
+        }
       }
     }
 
@@ -217,13 +261,19 @@ export class ChatterboxService {
       this.sanitizeArg(text),
       "--output",
       outputFile,
-      "--reference_audio",
-      validatedReferenceAudio,
+    ];
+
+    // Only include --reference_audio if we have a valid reference audio file
+    if (validatedReferenceAudio) {
+      args.push("--reference_audio", validatedReferenceAudio);
+    }
+
+    args.push(
       "--exaggeration",
       String(exaggeration),
       "--cfg_weight",
-      String(cfgWeight),
-    ];
+      String(cfgWeight)
+    );
 
     logger.log("Python path:", this.pythonPath);
     logger.log("Script path:", this.scriptPath);
