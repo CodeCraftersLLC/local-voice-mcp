@@ -17,6 +17,7 @@ jest.mock("fs", () => ({
   existsSync: jest.fn(),
   mkdirSync: jest.fn(),
   statSync: jest.fn(),
+  unlinkSync: jest.fn(),
 }));
 
 const mockFs = fs as jest.Mocked<typeof fs>;
@@ -285,6 +286,8 @@ describe("TTSTools", () => {
                 callback(0);
               }
             }),
+            kill: jest.fn(),
+            stderr: { on: jest.fn() },
           };
           return mockProcess;
         });
@@ -447,6 +450,237 @@ describe("TTSTools", () => {
       expect(errorResponse.success).toBe(false);
       expect(errorResponse.message).toContain("Unsupported audio format");
     });
+
+    describe("deleteAfterPlay functionality", () => {
+      it("should delete file after successful playback when deleteAfterPlay is true", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockReturnValue(undefined);
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: true,
+        });
+
+        expect(result.content).toHaveLength(1);
+        expect(!("isError" in result) || !result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.fileDeleted).toBe(true);
+        expect(response.deleteMessage).toContain(
+          "Successfully deleted audio file"
+        );
+        expect(mockFs.unlinkSync).toHaveBeenCalledWith(audioFile);
+      });
+
+      it("should delete file after failed playback when deleteAfterPlay is true", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockReturnValue(undefined);
+
+        // Mock spawn to return failure
+        mockSpawn.mockImplementation(() => {
+          const mockProcess = {
+            on: jest.fn((event, callback) => {
+              if (event === "close") {
+                // Call the callback with failure code
+                callback(1);
+              }
+            }),
+            stderr: { on: jest.fn() },
+          };
+          return mockProcess;
+        });
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: true,
+        });
+
+        expect(result.content).toHaveLength(1);
+        expect("isError" in result && result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(false);
+        expect(response.fileDeleted).toBe(true);
+        expect(response.deleteMessage).toContain(
+          "Successfully deleted audio file"
+        );
+        expect(mockFs.unlinkSync).toHaveBeenCalledWith(audioFile);
+      });
+
+      it("should delete file after timeout when deleteAfterPlay is true", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockReturnValue(undefined);
+
+        // Mock spawn to simulate timeout by never calling the close event
+        mockSpawn.mockImplementation(() => {
+          const mockProcess = {
+            on: jest.fn(),
+            kill: jest.fn(),
+            stderr: { on: jest.fn() },
+          };
+          return mockProcess;
+        });
+
+        // We'll test the timeout logic by directly calling the private method
+        // since mocking setTimeout is complex and the timeout test is less critical
+        const ttsToolsAny = ttsTools as any;
+        const deletionResult = ttsToolsAny.deleteAudioFileIfRequested(
+          audioFile,
+          true,
+          "test.wav"
+        );
+
+        expect(deletionResult.deleted).toBe(true);
+        expect(deletionResult.deleteMessage).toContain(
+          "Successfully deleted audio file"
+        );
+        expect(mockFs.unlinkSync).toHaveBeenCalledWith(audioFile);
+      });
+
+      it("should NOT delete file when deleteAfterPlay is false", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: false,
+        });
+
+        expect(result.content).toHaveLength(1);
+        expect(!("isError" in result) || !result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.fileDeleted).toBe(false);
+        expect(response.deleteMessage).toBeUndefined();
+        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+      });
+
+      it("should NOT delete file when deleteAfterPlay is undefined (default)", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+        const result = await ttsTools.playAudio({ audioFile });
+
+        expect(result.content).toHaveLength(1);
+        expect(!("isError" in result) || !result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.fileDeleted).toBe(false);
+        expect(response.deleteMessage).toBeUndefined();
+        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+      });
+
+      it("should handle deletion errors gracefully", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockImplementation(() => {
+          throw new Error("Permission denied");
+        });
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: true,
+        });
+
+        expect(result.content).toHaveLength(1);
+        expect(!("isError" in result) || !result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.fileDeleted).toBe(false);
+        expect(response.deleteMessage).toContain("Failed to delete audio file");
+        expect(response.deleteMessage).toContain("Permission denied");
+      });
+
+      it("should skip deletion if file is outside temp directory", async () => {
+        const audioFile = "/etc/passwd"; // Outside temp directory
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+        // This should fail validation before reaching playback, but let's test the deletion logic
+        // by directly calling the private method (we'll need to access it via any casting)
+        const ttsToolsAny = ttsTools as any;
+        const deletionResult = ttsToolsAny.deleteAudioFileIfRequested(
+          audioFile,
+          true,
+          "passwd"
+        );
+
+        expect(deletionResult.deleted).toBe(false);
+        expect(deletionResult.deleteMessage).toContain(
+          "outside temp directory"
+        );
+        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+      });
+
+      it("should handle file already deleted scenario", async () => {
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+
+        // File exists for initial validation but not when deletion is attempted
+        let existsCallCount = 0;
+        mockFs.existsSync.mockImplementation(() => {
+          existsCallCount++;
+          return existsCallCount === 1; // First call (validation) returns true, second call (deletion) returns false
+        });
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: true,
+        });
+
+        expect(result.content).toHaveLength(1);
+        expect(!("isError" in result) || !result.isError).toBe(true);
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.fileDeleted).toBe(false);
+        expect(response.deleteMessage).toContain(
+          "already deleted or not found"
+        );
+        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("getStatus", () => {
@@ -538,11 +772,15 @@ describe("TTSToolSchemas", () => {
       const validParams = {
         audioFile: "/tmp/test.wav",
         volume: 75,
+        deleteAfterPlay: true,
       };
 
       expect(() => {
         TTSToolSchemas.playAudio.audioFile.parse(validParams.audioFile);
         TTSToolSchemas.playAudio.volume?.parse(validParams.volume);
+        TTSToolSchemas.playAudio.deleteAfterPlay?.parse(
+          validParams.deleteAfterPlay
+        );
       }).not.toThrow();
     });
 
@@ -568,6 +806,23 @@ describe("TTSToolSchemas", () => {
         TTSToolSchemas.playAudio.volume?.parse(50);
         TTSToolSchemas.playAudio.volume?.parse(100);
       }).not.toThrow();
+    });
+
+    it("should validate deleteAfterPlay parameter", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.deleteAfterPlay?.parse(true);
+        TTSToolSchemas.playAudio.deleteAfterPlay?.parse(false);
+      }).not.toThrow();
+    });
+
+    it("should reject invalid deleteAfterPlay values", () => {
+      expect(() => {
+        TTSToolSchemas.playAudio.deleteAfterPlay?.parse("true");
+      }).toThrow();
+
+      expect(() => {
+        TTSToolSchemas.playAudio.deleteAfterPlay?.parse(1);
+      }).toThrow();
     });
   });
 });

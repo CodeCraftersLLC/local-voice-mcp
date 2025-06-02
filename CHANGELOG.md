@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2025-06-02
+
+### Added
+
+- `deleteAfterPlay` parameter to `play_audio` command for automatic file cleanup after playback
+- Secure file deletion functionality that only operates on files in the temporary directory
+- Comprehensive file cleanup in all playback scenarios (success, failure, timeout, error)
+- Enhanced response format including `fileDeleted` status and `deleteMessage` details
+- Extensive test coverage for the new file cleanup functionality
+
+### Changed
+
+- Updated `play_audio` tool schema to include optional `deleteAfterPlay` boolean parameter
+- Enhanced audio playback responses to include deletion status information
+- Improved logging for file deletion operations
+
+### Security
+
+- Added security validation to ensure only files in temp directory can be deleted
+- Implemented graceful error handling for deletion failures to prevent application crashes
+
 ## [0.1.3] - 2025-06-01
 
 ### Added
