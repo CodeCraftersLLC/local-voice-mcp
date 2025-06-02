@@ -13,6 +13,7 @@ The package includes a high-quality female reference voice that's used by defaul
       "command": "npx",
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
+        "USE_MALE_VOICE": "false",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "2000",
