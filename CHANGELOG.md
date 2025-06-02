@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2025-01-02
+
+### Added
+
+- Bundled high-quality female reference voice that's used by default when no reference audio is specified
+- Automatic fallback to bundled reference audio when specified reference audio files fail validation
+- New `getBundledReferenceAudioPath()` method in ChatterboxService for accessing the bundled reference audio
+
+### Changed
+
+- Improved user experience: no configuration needed for high-quality voice synthesis out of the box
+- Updated README to reflect that bundled reference audio is used by default
+- Updated environment variable documentation to clarify default behavior
+
+### Fixed
+
+- Resolved issue where relative paths to reference audio files in npm package didn't work correctly
+- Improved reference audio path resolution using `__dirname` for reliable package-relative paths
+
 ## [0.1.1] - 2025-01-02
 
 ### Fixed

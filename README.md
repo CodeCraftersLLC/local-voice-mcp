@@ -4,7 +4,7 @@ Give your MCP clients the ability to speak by running local voice models using C
 
 ## Quickstart
 
-Note: the env variables are optional
+The package includes a high-quality female reference voice that's used by default. All environment variables are optional.
 
 ```json
 {
@@ -13,7 +13,6 @@ Note: the env variables are optional
       "command": "npx",
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
-        "CHATTERBOX_REFERENCE_AUDIO": "./node_modules/@codecraftersllc/local-voice-mcp/female-reference-voice.wav",
         "CHATTERBOX_EXAGGERATION": "0.5",
         "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "2000",
@@ -258,7 +257,7 @@ ElevenLabs-compatible text-to-speech endpoint.
 
 These environment variables can be used to set default values for TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
 
-- `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac, default: empty)
+- `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac). If not specified, uses the bundled high-quality female reference voice.
 - `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
 - `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
