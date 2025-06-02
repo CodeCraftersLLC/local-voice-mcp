@@ -1,4 +1,3 @@
-
 // Mock the MCP SDK
 jest.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
   McpServer: jest.fn().mockImplementation(() => ({
@@ -9,7 +8,9 @@ jest.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
 }));
 
 jest.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
-  StdioServerTransport: jest.fn(),
+  StdioServerTransport: jest.fn().mockImplementation(() => ({
+    start: jest.fn().mockResolvedValue(undefined),
+  })),
 }));
 
 // Mock TTSTools
@@ -29,7 +30,6 @@ jest.mock("../../src/mcp/tools", () => ({
     getStatus: {},
   },
 }));
-
 
 describe("createMCPServer", () => {
   it("should start an MCP server", async () => {

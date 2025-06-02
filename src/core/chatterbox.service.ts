@@ -90,7 +90,9 @@ export class ChatterboxService {
     const allowedExtensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"];
     if (!allowedExtensions.includes(ext)) {
       throw new Error(
-        `Unsupported audio format: ${ext}. Allowed: ${allowedExtensions.join(", ")}`
+        `Unsupported audio format: ${ext}. Allowed: ${allowedExtensions.join(
+          ", "
+        )}`
       );
     }
 
@@ -109,7 +111,9 @@ export class ChatterboxService {
 
     // Security: Prevent path traversal attacks by disallowing parent directory sequences
     if (filePath.includes("..")) {
-      throw new Error("Path traversal sequences (..) are not allowed in reference audio paths");
+      throw new Error(
+        "Path traversal sequences (..) are not allowed in reference audio paths"
+      );
     }
 
     // Resolve to absolute path to handle relative paths properly
