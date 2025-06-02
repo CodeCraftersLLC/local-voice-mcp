@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-01-02
+
+### Fixed
+
+- Missing `scripts/` directory in published npm package causing "No such file or directory" errors when running the MCP server
+
+## [0.1.0] - 2024-01-XX
+
 ### Added
 
+- Initial release
+- MCP server implementation
+- Text-to-speech synthesis using Chatterbox TTS
+- Audio playback functionality
+- HTTP and stdio server modes
+- Comprehensive test suite
+- Security features for file path validation
 - Environment variable support for TTS configuration
 - `CHATTERBOX_REFERENCE_AUDIO` environment variable
 - `CHATTERBOX_EXAGGERATION` environment variable
@@ -28,15 +43,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Directory traversal security vulnerabilities
 - Command injection prevention
 - Duplicate reference audio arguments issue
-
-## [0.1.0] - 2024-01-XX
-
-### Added
-
-- Initial release
-- MCP server implementation
-- Text-to-speech synthesis using Chatterbox TTS
-- Audio playback functionality
-- HTTP and stdio server modes
-- Comprehensive test suite
-- Security features for file path validation
