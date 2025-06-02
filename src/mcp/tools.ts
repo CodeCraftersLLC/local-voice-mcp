@@ -234,16 +234,84 @@ export class TTSTools {
   }
 
   /**
+   * Safely delete an audio file if requested
+   * @param filePath - The resolved file path to delete
+   * @param deleteAfterPlay - Whether deletion was requested
+   * @param originalFileName - The original filename for logging
+   * @returns Object with deletion status and message
+   */
+  private deleteAudioFileIfRequested(
+    filePath: string,
+    deleteAfterPlay: boolean,
+    originalFileName: string
+  ): { deleted: boolean; deleteMessage?: string } {
+    if (!deleteAfterPlay) {
+      return { deleted: false };
+    }
+
+    try {
+      // Security check: Ensure file is still in temp directory
+      const normalizedTempDir = path.normalize(TEMP_AUDIO_DIR);
+      if (
+        !filePath.startsWith(normalizedTempDir + path.sep) &&
+        filePath !== normalizedTempDir
+      ) {
+        logger.warn(
+          `Deletion skipped: File "${filePath}" is outside temp directory`
+        );
+        return {
+          deleted: false,
+          deleteMessage: "Deletion skipped: File outside temp directory",
+        };
+      }
+
+      // Check if file exists before attempting deletion
+      if (!fs.existsSync(filePath)) {
+        logger.info(`File "${originalFileName}" already deleted or not found`);
+        return {
+          deleted: false,
+          deleteMessage: "File already deleted or not found",
+        };
+      }
+
+      // Attempt deletion
+      fs.unlinkSync(filePath);
+      logger.info(`Successfully deleted audio file: ${originalFileName}`);
+      return {
+        deleted: true,
+        deleteMessage: `Successfully deleted audio file: ${originalFileName}`,
+      };
+    } catch (error) {
+      const errorMessage = `Failed to delete audio file "${originalFileName}": ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      logger.error(errorMessage);
+      return {
+        deleted: false,
+        deleteMessage: errorMessage,
+      };
+    }
+  }
+
+  /**
    * Play an audio file using the system's default audio player
    */
-  async playAudio(params: { audioFile: string; volume?: number }): Promise<{
+  async playAudio(params: {
+    audioFile: string;
+    volume?: number;
+    deleteAfterPlay?: boolean;
+  }): Promise<{
     content: Array<{
       type: "text";
       text: string;
     }>;
     isError?: boolean;
   }> {
-    const { audioFile: rawAudioFile, volume: rawVolume } = params; // Rename to distinguish from resolved path
+    const {
+      audioFile: rawAudioFile,
+      volume: rawVolume,
+      deleteAfterPlay = false,
+    } = params; // Rename to distinguish from resolved path
 
     if (!rawAudioFile || rawAudioFile.trim().length === 0) {
       return createErrorResponse(
@@ -447,16 +515,29 @@ export class TTSTools {
       return new Promise((resolve) => {
         const PLAYBACK_TIMEOUT = 30000; // 30 seconds
         let timeoutId: NodeJS.Timeout;
-        
+
         logger.info(`Executing playback: ${command} ${args.join(" ")}`);
         const player = spawn(command, args);
-        
+
         timeoutId = setTimeout(() => {
-          player.kill('SIGTERM');
+          player.kill("SIGTERM");
+          const deletionResult = this.deleteAudioFileIfRequested(
+            resolvedPathToPlay,
+            deleteAfterPlay,
+            rawAudioFile
+          );
           resolve(
             createErrorResponse(
               "Playback Timeout",
-              `Audio playback timed out after ${PLAYBACK_TIMEOUT/1000} seconds`
+              `Audio playback timed out after ${
+                PLAYBACK_TIMEOUT / 1000
+              } seconds`,
+              deletionResult.deleted
+                ? {
+                    fileDeleted: true,
+                    deleteMessage: deletionResult.deleteMessage,
+                  }
+                : undefined
             )
           );
         }, PLAYBACK_TIMEOUT);
@@ -471,6 +552,11 @@ export class TTSTools {
         player.on("close", (code: number) => {
           clearTimeout(timeoutId);
           if (code === 0) {
+            const deletionResult = this.deleteAudioFileIfRequested(
+              resolvedPathToPlay,
+              deleteAfterPlay,
+              rawAudioFile
+            );
             resolve({
               content: [
                 {
@@ -484,6 +570,10 @@ export class TTSTools {
                       platform: process.platform,
                       command: `${command} ${args.join(" ")}`,
                       timestamp: new Date().toISOString(),
+                      fileDeleted: deletionResult.deleted,
+                      ...(deletionResult.deleteMessage && {
+                        deleteMessage: deletionResult.deleteMessage,
+                      }),
                     },
                     null,
                     2
@@ -497,13 +587,24 @@ export class TTSTools {
                 " "
               )}. Exit code: ${code}. Stderr: ${stderrOutput}`
             );
+            const deletionResult = this.deleteAudioFileIfRequested(
+              resolvedPathToPlay,
+              deleteAfterPlay,
+              rawAudioFile
+            );
             resolve(
               createErrorResponse(
                 "Playback Failed",
                 `Audio playback command failed with exit code: ${code}. File: "${rawAudioFile}". Stderr: ${stderrOutput.substring(
                   0,
                   200
-                )}`
+                )}`,
+                deletionResult.deleted
+                  ? {
+                      fileDeleted: true,
+                      deleteMessage: deletionResult.deleteMessage,
+                    }
+                  : undefined
               )
             );
           }
@@ -514,10 +615,21 @@ export class TTSTools {
           logger.error(
             `Failed to start playback for "${fileArg}". Command: ${command}. Error: ${err.message}`
           );
+          const deletionResult = this.deleteAudioFileIfRequested(
+            resolvedPathToPlay,
+            deleteAfterPlay,
+            rawAudioFile
+          );
           resolve(
             createErrorResponse(
               "Command Execution Failed",
-              `Failed to start audio player "${command}". Error: ${err.message}. Is the player installed and in PATH?`
+              `Failed to start audio player "${command}". Error: ${err.message}. Is the player installed and in PATH?`,
+              deletionResult.deleted
+                ? {
+                    fileDeleted: true,
+                    deleteMessage: deletionResult.deleteMessage,
+                  }
+                : undefined
             )
           );
         });
@@ -638,7 +750,7 @@ const synthesizeTextTool: Tool = {
 const playAudioTool: Tool = {
   name: "play_audio",
   description:
-    "Play an audio file using the system's default audio player with optional volume control. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
+    "Play an audio file using the system's default audio player with optional volume control and file cleanup. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
   inputSchema: {
     type: "object",
     properties: {
@@ -653,6 +765,11 @@ const playAudioTool: Tool = {
           "Playback volume as a percentage (0-100). If not specified, uses CHATTERBOX_PLAYBACK_VOLUME environment variable or default of 50.",
         minimum: 0,
         maximum: 100,
+      },
+      deleteAfterPlay: {
+        type: "boolean",
+        description:
+          "Whether to delete the audio file after playback completes (success or failure). Default: false. Useful for cleaning up temporary audio files.",
       },
     },
     required: ["audioFile"],
@@ -693,6 +810,7 @@ export const TTSToolSchemas = {
   playAudio: {
     audioFile: z.string().min(1, "Audio file path cannot be empty"),
     volume: z.number().min(0).max(100).optional(),
+    deleteAfterPlay: z.boolean().optional(),
   },
   getStatus: {},
 };
