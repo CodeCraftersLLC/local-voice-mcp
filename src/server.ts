@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { finished } from "stream";
-import { ChatterboxService } from "./core/chatterbox.service";
+import { TTSService } from "./core/tts-service.factory";
 import { logger } from "./utils/logger";
 import crypto from "crypto";
 
@@ -14,11 +14,16 @@ interface TTSRequest {
     referenceAudio?: string;
     exaggeration?: number;
     cfg_weight?: number;
+    speed?: number;
+    language?: string;
+    voice?: string;
+    model_path?: string;
+    voices_path?: string;
   };
 }
 
 const app = express();
-const chatterbox = new ChatterboxService();
+const ttsService = new TTSService();
 const TEMP_AUDIO_DIR = path.join(os.tmpdir(), "local-voice-mcp");
 
 // Create temp directory if it doesn't exist
@@ -97,23 +102,30 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
       .trim();
 
-    // Check character limit to prevent creating wav files that are too large
-    const maxCharacters = parseInt(
-      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
-      10
-    );
+    // Check character limit based on active engine
+    const engineType = ttsService.getEngineType();
+    let maxCharacters: number;
+    
+    if (engineType === "kokoro") {
+      maxCharacters = parseInt(process.env.KOKORO_MAX_CHARACTERS || "5000", 10);
+    } else {
+      // Default to Chatterbox limit
+      maxCharacters = parseInt(process.env.CHATTERBOX_MAX_CHARACTERS || "2000", 10);
+    }
+    
     if (sanitizedText.length > maxCharacters) {
       res.status(400).json({
         error: "Text too long",
-        message: `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${sanitizedText.length}`,
+        message: `Text exceeds maximum character limit of ${maxCharacters} characters for ${engineType} engine. Current length: ${sanitizedText.length}`,
         maxCharacters,
         currentLength: sanitizedText.length,
+        engine: engineType,
       });
       return;
     }
 
     // This call might throw, or return a path
-    audioPath = await chatterbox.synthesize(sanitizedText, options);
+    audioPath = await ttsService.synthesize(sanitizedText, options);
     
     if (!audioPath) {
       throw new Error("Synthesis returned no audio file path");
@@ -192,11 +204,11 @@ app.post("/tts", authenticate, ttsHandler);
 
 export async function startApp(port: number): Promise<void> {
   try {
-    await chatterbox.ensureReady(); // Wait for Python env
-    logger.log("Chatterbox environment successfully initialized.");
+    await ttsService.ensureReady(); // Wait for TTS engine initialization
+    logger.log(`TTS service (${ttsService.getEngineType()}) successfully initialized.`);
   } catch (error) {
     logger.error(
-      "Failed to initialize Chatterbox environment:",
+      `Failed to initialize TTS service (${ttsService.getEngineType()}):`,
       error instanceof Error ? error.message : "Unknown error"
     );
     throw error; // Prevent server from starting if env setup fails
