@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { finished } from "stream";
-import { ChatterboxService } from "./core/chatterbox.service";
+import { TTSService } from "./core/tts-service.factory";
 import { logger } from "./utils/logger";
 import crypto from "crypto";
 
@@ -14,11 +14,18 @@ interface TTSRequest {
     referenceAudio?: string;
     exaggeration?: number;
     cfg_weight?: number;
+    temperature?: number;
+    top_p?: number;
+    max_tokens?: number;
+    chunk_size?: number;
+    lookback_frames?: number;
+    repetition_penalty?: number;
+    repetition_context_size?: number;
   };
 }
 
 const app = express();
-const chatterbox = new ChatterboxService();
+const ttsService = new TTSService();
 const TEMP_AUDIO_DIR = path.join(os.tmpdir(), "local-voice-mcp");
 
 // Create temp directory if it doesn't exist
@@ -113,7 +120,7 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
     }
 
     // This call might throw, or return a path
-    audioPath = await chatterbox.synthesize(sanitizedText, options);
+    audioPath = await ttsService.synthesize(sanitizedText, options);
     
     if (!audioPath) {
       throw new Error("Synthesis returned no audio file path");
@@ -192,11 +199,11 @@ app.post("/tts", authenticate, ttsHandler);
 
 export async function startApp(port: number): Promise<void> {
   try {
-    await chatterbox.ensureReady(); // Wait for Python env
-    logger.log("Chatterbox environment successfully initialized.");
+    await ttsService.ensureReady(); // Wait for TTS engine initialization
+    logger.log(`TTS service (${ttsService.getEngineType()}) successfully initialized.`);
   } catch (error) {
     logger.error(
-      "Failed to initialize Chatterbox environment:",
+      `Failed to initialize TTS service (${ttsService.getEngineType()}):`,
       error instanceof Error ? error.message : "Unknown error"
     );
     throw error; // Prevent server from starting if env setup fails

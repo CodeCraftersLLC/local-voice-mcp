@@ -1,10 +1,10 @@
 # Local Voice MCP
 
-Give your MCP clients the ability to speak by running local voice models using Chatterbox TTS.
+Give your MCP clients the ability to speak by running local voice models using Chatterbox TTS or Kokoro TTS.
 
 ## Quickstart
 
-The package includes a high-quality female reference voice that's used by default. All environment variables are optional.
+The package includes a high-quality female reference voice that's used by default with Chatterbox TTS. All environment variables are optional.
 
 ```json
 {
@@ -22,6 +22,113 @@ The package includes a high-quality female reference voice that's used by defaul
     }
   }
 }
+```
+
+## TTS Engine Selection
+
+Local Voice MCP supports two TTS engines:
+
+### Chatterbox TTS (Default)
+
+High-quality voice synthesis with voice cloning support. Works on all platforms.
+
+- ✅ Cross-platform support (macOS, Windows, Linux)
+- ✅ Voice cloning with reference audio
+- ✅ Prosody controls (exaggeration, cfg_weight)
+- ✅ High-quality output
+
+### Kokoro TTS (Cross-Platform)
+
+High-quality open-source TTS using ONNX runtime with multi-language and multi-voice support.
+
+- ✅ Cross-platform (macOS, Windows, Linux)
+- ✅ Multiple languages (en-us, en-gb, fr-fr, it, ja, cmn)
+- ✅ 40+ voices with gender and accent options
+- ✅ Voice blending capability
+- ✅ Adjustable speech speed
+- ✅ GPU support
+- ✅ Long-form content (no length limitations)
+- ✅ **Automatic dependency and model installation** (nothing to install manually!)
+
+To use Kokoro, set the `TTS_ENGINE` environment variable:
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
+      "env": {
+        "TTS_ENGINE": "kokoro",
+        "KOKORO_LANGUAGE": "en-us",
+        "KOKORO_VOICE": "af_sarah",
+        "KOKORO_SPEED": "1.0"
+      }
+    }
+  }
+}
+```
+
+**Setup:**
+
+Kokoro TTS automatically installs Python dependencies and downloads model files (~100MB) on first use. Just configure the MCP server and you're ready to go!
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
+      "env": {
+        "TTS_ENGINE": "kokoro",
+        "KOKORO_LANGUAGE": "en-us",
+        "KOKORO_VOICE": "af_sarah",
+        "KOKORO_SPEED": "1.0"
+      }
+    }
+  }
+}
+```
+
+**What Happens on First Use:**
+
+- Python packages (`kokoro-onnx`, `soundfile`, `numpy`) are automatically installed via pip
+- Model files (`kokoro-v1.0.onnx` ~90MB, `voices-v1.0.bin` ~13MB) are automatically downloaded
+- Files are cached in `~/.cache/kokoro-tts/` for future use
+- This one-time setup takes ~1-2 minutes depending on your internet connection
+
+**Manual Installation (Optional):**
+
+If you prefer to install dependencies manually or if automatic installation fails:
+
+```bash
+# Install Python dependencies
+pip install kokoro-onnx soundfile numpy
+
+# Model files will still auto-download, or you can download manually:
+cd ~/.cache/kokoro-tts
+wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx
+wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin
+```
+
+**Available Voices:**
+
+- 🇺🇸 American English: `af_alloy`, `af_bella`, `af_sarah`, `af_nova`, `am_adam`, `am_michael`, `am_eric`, and more
+- 🇬🇧 British English: `bf_emma`, `bf_isabella`, `bm_george`, `bm_lewis`, and more
+- 🇫🇷 French: `ff_siwis`
+- 🇮🇹 Italian: `if_sara`, `im_nicola`
+- 🇯🇵 Japanese: `jf_alpha`, `jm_kumo`, and more
+- 🇨🇳 Chinese: `zf_xiaobei`, `zm_yunjian`, and more
+
+**Voice Blending:**
+Kokoro supports blending multiple voices for unique voice characteristics:
+
+```bash
+# 60-40 mix of two voices
+KOKORO_VOICE="af_sarah:60,am_adam:40"
+
+# Equal blend (50-50)
+KOKORO_VOICE="am_adam,af_sarah"
 ```
 
 ## Features
@@ -105,14 +212,25 @@ When running in MCP mode, the following tools are available:
 
 ### `synthesize_text`
 
-Converts text to speech and returns audio data.
+Converts text to speech and returns audio data using the configured TTS engine.
 
-**Parameters:**
+**Common Parameters:**
 
 - `text` (string, required): Text to synthesize
+
+**Chatterbox-Specific Parameters:**
+
 - `referenceAudio` (string, optional): Path to reference audio for voice cloning
 - `exaggeration` (number, optional): Voice style exaggeration (0-2, default: 0.2)
 - `cfg_weight` (number, optional): Configuration weight (0-5, default: 1.0)
+
+**Kokoro-Specific Parameters:**
+
+- `speed` (number, optional): Speech speed (0.5-2.0, default: 1.0)
+- `language` (string, optional): Language code (e.g., 'en-us', 'en-gb', 'fr-fr', 'ja', 'cmn', default: 'en-us')
+- `voice` (string, optional): Voice name (e.g., 'af_sarah', 'am_adam', 'bf_emma', default: 'af_sarah')
+- `model_path` (string, optional): Path to Kokoro ONNX model file
+- `voices_path` (string, optional): Path to Kokoro voices bin file
 
 **Returns:**
 
@@ -127,6 +245,8 @@ Converts text to speech and returns audio data.
   "audioFile": "/tmp/local-voice-mcp/audio_20240115_103000_abc123.wav",
   "textLength": 25,
   "audioFormat": "wav",
+  "engine": "chatterbox",
+  "engineName": "chatterbox",
   "options": {
     "exaggeration": 0.2,
     "cfg_weight": 1.0
@@ -254,9 +374,13 @@ ElevenLabs-compatible text-to-speech endpoint.
 - `PORT`: HTTP server port (default: 59125)
 - `MCP_MODE`: Operation mode - "mcp" or "http" (default: "mcp")
 
-#### TTS Configuration
+#### TTS Engine Selection
 
-These environment variables can be used to set default values for TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
+- `TTS_ENGINE`: TTS engine to use - "chatterbox", "kani-mlx", or "kokoro" (default: "chatterbox")
+
+#### Chatterbox TTS Configuration
+
+These environment variables can be used to set default values for Chatterbox TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
 
 - `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac). If not specified, uses the bundled high-quality female reference voice.
 - `USE_MALE_VOICE`: Use male voice instead of bundled female reference voice (true/false, default: false). When set to true, uses the default Chatterbox male voice instead of the bundled female voice. This only applies when no custom reference audio is specified.
@@ -265,6 +389,19 @@ These environment variables can be used to set default values for TTS synthesis.
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
 - `CHATTERBOX_OUTPUT_DIR`: Output directory for generated audio files (default: system temp + "local-voice-mcp")
 - `CHATTERBOX_PLAYBACK_VOLUME`: Default audio playback volume as percentage (integer, 0-100, default: 50)
+
+#### Kokoro Configuration
+
+These environment variables can be used to set default values for Kokoro synthesis:
+
+- `KOKORO_SPEED`: Speech speed (float, 0.5-2.0, default: 1.0)
+- `KOKORO_LANGUAGE`: Language code (string, default: "en-us"). Supported: en-us, en-gb, fr-fr, it, ja, cmn
+- `KOKORO_VOICE`: Voice name (string, default: "af_sarah"). See available voices above. Can also use voice blending format like "voice1:weight,voice2:weight"
+- `KOKORO_MODEL_PATH`: Path to kokoro ONNX model file (string, default: "kokoro-v1.0.onnx")
+- `KOKORO_VOICES_PATH`: Path to voices bin file (string, default: "voices-v1.0.bin")
+- `KOKORO_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 5000)
+- `KOKORO_OUTPUT_DIR`: Output directory for generated audio files (default: system temp + "local-voice-mcp")
+- `PYTHON_PATH`: Path to Python interpreter (default: "python3")
 
 **Example:**
 
