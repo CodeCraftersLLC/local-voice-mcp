@@ -57,7 +57,11 @@ export class TTSService {
    */
   async ensureReady(): Promise<void> {
     if (!this.readyPromise) {
-      this.readyPromise = this.engine.ensureReady();
+      this.readyPromise = this.engine.ensureReady().catch((error) => {
+        // Clear the cached promise on failure so retry is possible
+        this.readyPromise = null;
+        throw error;
+      });
     }
     return this.readyPromise;
   }

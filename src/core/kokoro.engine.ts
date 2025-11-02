@@ -5,7 +5,7 @@
  * Supports multiple languages, voices, voice blending, and adjustable speed.
  */
 
-import { spawn, ChildProcess } from "child_process";
+import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -36,7 +36,11 @@ export class KokoroEngine implements ITTSEngine {
       return this.readyPromise;
     }
 
-    this.readyPromise = this.setupEnvironment();
+    this.readyPromise = this.setupEnvironment().catch((error) => {
+      // Clear the cached promise on failure so retry is possible
+      this.readyPromise = null;
+      throw error;
+    });
     return this.readyPromise;
   }
 
@@ -118,10 +122,12 @@ export class KokoroEngine implements ITTSEngine {
       const file = fs.createWriteStream(dest);
       let downloadedBytes = 0;
       let totalBytes = 0;
+      let lastLoggedPercent = 0;
 
       https.get(url, (response) => {
-        // Handle redirects
-        if (response.statusCode === 301 || response.statusCode === 302) {
+        // Handle redirects (301, 302, 307, 308)
+        if (response.statusCode === 301 || response.statusCode === 302 || 
+            response.statusCode === 307 || response.statusCode === 308) {
           const redirectUrl = response.headers.location;
           if (redirectUrl) {
             file.close();
@@ -139,9 +145,14 @@ export class KokoroEngine implements ITTSEngine {
 
         response.on('data', (chunk) => {
           downloadedBytes += chunk.length;
-          const percent = totalBytes > 0 ? ((downloadedBytes / totalBytes) * 100).toFixed(1) : '?';
+          const percent = totalBytes > 0 ? ((downloadedBytes / totalBytes) * 100) : 0;
           const mb = (downloadedBytes / 1024 / 1024).toFixed(1);
-          logger.log(`[KokoroEngine] Downloaded ${mb}MB (${percent}%)`);
+          
+          // Throttle logging - only log every 10% progress
+          if (Math.floor(percent / 10) > Math.floor(lastLoggedPercent / 10)) {
+            logger.log(`[KokoroEngine] Downloaded ${mb}MB (${percent.toFixed(1)}%)`);
+            lastLoggedPercent = percent;
+          }
         });
 
         response.pipe(file);

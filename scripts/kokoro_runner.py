@@ -13,12 +13,12 @@ Usage:
 import argparse
 import sys
 import os
+import traceback
 from pathlib import Path
 
 # Import Kokoro components
 try:
     from kokoro_onnx import Kokoro
-    import numpy as np
     import soundfile as sf
 except ImportError as e:
     print(f"Error: Required dependency not found: {e}", file=sys.stderr)
@@ -138,7 +138,6 @@ Examples:
         
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
-        import traceback
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 

@@ -14,13 +14,11 @@ interface TTSRequest {
     referenceAudio?: string;
     exaggeration?: number;
     cfg_weight?: number;
-    temperature?: number;
-    top_p?: number;
-    max_tokens?: number;
-    chunk_size?: number;
-    lookback_frames?: number;
-    repetition_penalty?: number;
-    repetition_context_size?: number;
+    speed?: number;
+    language?: string;
+    voice?: string;
+    model_path?: string;
+    voices_path?: string;
   };
 }
 
@@ -104,17 +102,24 @@ async function ttsHandler(req: Request<{}, {}, TTSRequest>, res: Response) {
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
       .trim();
 
-    // Check character limit to prevent creating wav files that are too large
-    const maxCharacters = parseInt(
-      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
-      10
-    );
+    // Check character limit based on active engine
+    const engineType = ttsService.getEngineType();
+    let maxCharacters: number;
+    
+    if (engineType === "kokoro") {
+      maxCharacters = parseInt(process.env.KOKORO_MAX_CHARACTERS || "5000", 10);
+    } else {
+      // Default to Chatterbox limit
+      maxCharacters = parseInt(process.env.CHATTERBOX_MAX_CHARACTERS || "2000", 10);
+    }
+    
     if (sanitizedText.length > maxCharacters) {
       res.status(400).json({
         error: "Text too long",
-        message: `Text exceeds maximum character limit of ${maxCharacters} characters. Current length: ${sanitizedText.length}`,
+        message: `Text exceeds maximum character limit of ${maxCharacters} characters for ${engineType} engine. Current length: ${sanitizedText.length}`,
         maxCharacters,
         currentLength: sanitizedText.length,
+        engine: engineType,
       });
       return;
     }

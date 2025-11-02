@@ -73,23 +73,6 @@ To use Kokoro, set the `TTS_ENGINE` environment variable:
 
 Kokoro TTS automatically installs Python dependencies and downloads model files (~100MB) on first use. Just configure the MCP server and you're ready to go!
 
-```json
-{
-  "mcpServers": {
-    "local-voice-mcp": {
-      "command": "npx",
-      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
-      "env": {
-        "TTS_ENGINE": "kokoro",
-        "KOKORO_LANGUAGE": "en-us",
-        "KOKORO_VOICE": "af_sarah",
-        "KOKORO_SPEED": "1.0"
-      }
-    }
-  }
-}
-```
-
 **What Happens on First Use:**
 
 - Python packages (`kokoro-onnx`, `soundfile`, `numpy`) are automatically installed via pip

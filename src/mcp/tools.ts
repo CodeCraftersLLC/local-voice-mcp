@@ -160,13 +160,17 @@ export class TTSTools {
                 audioFormat: "wav",
                 engine: this.ttsService.getEngineType(),
                 engineName: this.ttsService.getEngineName(),
-                options: {
-                  exaggeration,
-                  cfg_weight,
-                  speed,
-                  language,
-                  voice,
-                },
+                options: Object.fromEntries(
+                  Object.entries({
+                    exaggeration,
+                    cfg_weight,
+                    speed,
+                    language,
+                    voice,
+                    model_path,
+                    voices_path,
+                  }).filter(([_, v]) => v !== undefined)
+                ),
                 generatedAt: new Date().toISOString(),
               },
               null,
