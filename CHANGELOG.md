@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-11-02
+
+### Added
+
+- **Kokoro TTS Engine Support**: Added cross-platform Kokoro TTS engine with multi-language and multi-voice support
+  - 40+ voices with gender and accent options
+  - Support for multiple languages (en-us, en-gb, fr-fr, it, ja, cmn)
+  - Voice blending capability
+  - Adjustable speech speed (0.5x to 2.0x)
+  - GPU support via ONNX runtime
+  - Long-form content support with no length limitations
+- **Zero-Config Setup for Kokoro**: Automatic installation of Python dependencies and model files
+  - Auto-installs `kokoro-onnx`, `soundfile`, and `numpy` packages
+  - Auto-downloads model files (~100MB) to `~/.cache/kokoro-tts/`
+  - No manual terminal commands required
+- **Plugin-Based TTS Architecture**: Refactored to support multiple TTS engines via `ITTSEngine` interface
+  - Factory pattern for engine selection via `TTS_ENGINE` environment variable
+  - Modular design allowing easy addition of new engines
+- **Engine-Specific Configuration**: Added Kokoro-specific environment variables and MCP tool parameters
+  - `KOKORO_SPEED`, `KOKORO_LANGUAGE`, `KOKORO_VOICE`
+  - `KOKORO_MODEL_PATH`, `KOKORO_VOICES_PATH`
+  - `KOKORO_MAX_CHARACTERS` (default: 5000)
+- **Enhanced Error Recovery**: Improved retry logic in `ensureReady()` methods
+  - Failed setup attempts now allow retries on subsequent calls
+  - No stale rejected promises cached
+- **Comprehensive Documentation**: Added detailed docs for Kokoro integration
+  - `KOKORO_INTEGRATION.md` with implementation details
+  - `KOKORO_AUTO_DOWNLOAD.md` explaining automatic setup
+  - `ZERO_CONFIG_SETUP.md` for user-friendly setup guide
+
+### Changed
+
+- **Engine Selection**: TTS engine now configurable via `TTS_ENGINE` environment variable (default: "chatterbox")
+- **Character Limits**: Now engine-specific (Chatterbox: 2000, Kokoro: 5000)
+- **MCP Tool Schema**: Updated `synthesize_text` tool to support both Chatterbox and Kokoro parameters
+- **API Responses**: Enhanced to include engine-specific information and filtered undefined options
+- **Download Progress Logging**: Throttled to every 10% to reduce log spam during model downloads
+- **HTTP Redirect Handling**: Added support for HTTP 307/308 redirects in file downloads
+
+### Removed
+
+- **Kani-MLX Engine**: Removed all Kani-MLX code, files, and documentation
+  - Deleted `kani-mlx.engine.ts`, `kani_runner.py`, `requirements-kani-mlx.txt`
+  - Removed Kani-MLX specific options from interfaces and tools
+  - Cleaned up tests and documentation
+
+### Fixed
+
+- **Retry Logic**: Fixed `ensureReady()` in both `TTSService` and individual engines to properly clear failed promises
+- **Character Limit Validation**: Corrected bug where server always used Chatterbox limit regardless of active engine
+- **Unused Imports**: Removed unused `ChildProcess` from `kokoro.engine.ts` and `numpy` from `kokoro_runner.py`
+- **Kokoro API Validation**: Removed invalid `get_languages()` and `get_voices()` calls that don't exist in `kokoro-onnx`
+- **Python Import Order**: Moved `traceback` import to top of `kokoro_runner.py` for PEP 8 compliance
+- **Options Response**: Properly filter undefined values from MCP tool response options
+
+### Security
+
+- **Path Validation**: Continued robust path validation and sanitization across all engines
+- **Directory Traversal Prevention**: Maintained security measures for file operations
+
 ## [0.1.4] - 2025-06-02
 
 ### Added
