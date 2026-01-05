@@ -65,8 +65,6 @@ export class TTSTools {
   async synthesizeText(params: {
     text: string;
     referenceAudio?: string;
-    exaggeration?: number;
-    cfg_weight?: number;
     speed?: number;
     language?: string;
     voice?: string;
@@ -76,8 +74,6 @@ export class TTSTools {
     const {
       text,
       referenceAudio: rawReferenceAudioPath,
-      exaggeration,
-      cfg_weight,
       speed,
       language,
       voice,
@@ -126,8 +122,6 @@ export class TTSTools {
     try {
       const audioPath = await this.ttsService.synthesize(text, {
         referenceAudio: resolvedReferenceAudioPath,
-        exaggeration,
-        cfg_weight,
         speed,
         language,
         voice,
@@ -162,8 +156,6 @@ export class TTSTools {
                 engineName: this.ttsService.getEngineName(),
                 options: Object.fromEntries(
                   Object.entries({
-                    exaggeration,
-                    cfg_weight,
                     speed,
                     language,
                     voice,
@@ -321,7 +313,7 @@ export class TTSTools {
     const {
       audioFile: rawAudioFile,
       volume: rawVolume,
-      deleteAfterPlay = false,
+      deleteAfterPlay = true, // Default to true to clean up temp files after playback
     } = params; // Rename to distinguish from resolved path
 
     if (!rawAudioFile || rawAudioFile.trim().length === 0) {
@@ -721,33 +713,19 @@ export interface Tool {
 const synthesizeTextTool: Tool = {
   name: "synthesize_text",
   description:
-    "Convert text to speech using the configured TTS engine (Chatterbox or Kokoro). Supports engine-specific parameters for voice cloning, prosody controls, and generation settings.",
+    "Convert text to speech using the configured TTS engine (Chatterbox Turbo or Kokoro). For Chatterbox Turbo, use paralinguistic tags directly in text for expressive speech: [laugh], [sigh], [cough], [chuckle], [gasp], [groan], [clear throat], [sniff], [shush]. Supports voice cloning via reference audio.",
   inputSchema: {
     type: "object",
     properties: {
       text: {
         type: "string",
         description:
-          "The text to convert to speech. Must be non-empty and under the character limit.",
+          "The text to convert to speech. Must be non-empty and under the character limit. For Chatterbox Turbo, you can include paralinguistic tags like [laugh], [sigh], [cough] for expressive speech.",
       },
       // Chatterbox-specific parameters
       referenceAudio: {
         type: "string",
         description: "Optional path to reference audio file for voice cloning (Chatterbox only).",
-      },
-      exaggeration: {
-        type: "number",
-        description:
-          "Voice style exaggeration level (0.0 to 2.0, default: 0.2, Chatterbox only).",
-        minimum: 0,
-        maximum: 2,
-      },
-      cfg_weight: {
-        type: "number",
-        description:
-          "Configuration weight for TTS model (0.0 to 5.0, default: 1.0, Chatterbox only).",
-        minimum: 0,
-        maximum: 5,
       },
       // Kokoro-specific parameters
       speed: {
@@ -809,7 +787,7 @@ const playAudioTool: Tool = {
       deleteAfterPlay: {
         type: "boolean",
         description:
-          "Whether to delete the audio file after playback completes (success or failure). Default: false. Useful for cleaning up temporary audio files.",
+          "Whether to delete the audio file after playback completes (success or failure). Default: true. Set to false to keep the file after playback.",
       },
     },
     required: ["audioFile"],
@@ -844,8 +822,8 @@ export const TTSToolSchemas = {
   synthesizeText: {
     text: z.string().min(1, "Text cannot be empty"),
     referenceAudio: z.string().optional(),
-    exaggeration: z.number().min(0).max(2).optional(),
-    cfg_weight: z.number().min(0).max(5).optional(),
+    // Note: exaggeration and cfg_weight removed in Chatterbox Turbo
+    // Use paralinguistic tags in text instead: [laugh], [sigh], [cough], etc.
   },
   playAudio: {
     audioFile: z.string().min(1, "Audio file path cannot be empty"),

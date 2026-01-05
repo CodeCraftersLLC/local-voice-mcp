@@ -23,7 +23,12 @@ export class ChatterboxEngine implements ITTSEngine {
   }
 
   private resolvePythonPath(): string {
-    // Implementation remains the same
+    // Allow overriding Python path via environment variable
+    // This is useful when using a conda environment with specific dependencies
+    const envPythonPath = process.env.PYTHON_PATH || process.env.CHATTERBOX_PYTHON_PATH;
+    if (envPythonPath) {
+      return envPythonPath;
+    }
     return "python3";
   }
 
@@ -46,29 +51,21 @@ export class ChatterboxEngine implements ITTSEngine {
       ready: this.envReady,
       capabilities: [
         "voice-cloning",
-        "prosody-control",
+        "paralinguistic-tags",
         "reference-audio",
-        "cross-platform"
+        "cross-platform",
+        "multi-architecture"
       ],
-      version: "0.1.5",
+      version: "0.2.0",
       engineName: this.engineName
     };
   }
 
   validateOptions(options: TTSOptions): void {
-    if (
-      options.exaggeration !== undefined &&
-      (options.exaggeration < 0 || options.exaggeration > 2)
-    ) {
-      throw new Error("Exaggeration must be between 0 and 2");
-    }
-    
-    if (
-      options.cfg_weight !== undefined &&
-      (options.cfg_weight < 0 || options.cfg_weight > 5)
-    ) {
-      throw new Error("CFG weight must be between 0 and 5");
-    }
+    // Chatterbox Turbo no longer uses exaggeration or cfg_weight parameters
+    // These have been replaced by paralinguistic tags embedded in the text
+    // e.g., "[laugh]", "[sigh]", "[cough]", etc.
+    // No validation needed for the current parameters
   }
 
   async shutdown(): Promise<void> {
@@ -229,12 +226,6 @@ export class ChatterboxEngine implements ITTSEngine {
 
     const referenceAudio =
       options?.referenceAudio || process.env.CHATTERBOX_REFERENCE_AUDIO || "";
-    const exaggeration =
-      options?.exaggeration ??
-      parseFloat(process.env.CHATTERBOX_EXAGGERATION || "0.2");
-    const cfgWeight =
-      options?.cfg_weight ??
-      parseFloat(process.env.CHATTERBOX_CFG_WEIGHT || "1");
 
     // Create output directory if it doesn't exist
     const outputDir =
@@ -295,6 +286,7 @@ export class ChatterboxEngine implements ITTSEngine {
     }
 
     // Prepare arguments for the Python script
+    // Note: Chatterbox Turbo uses paralinguistic tags in text instead of exaggeration/cfg_weight
     const args = [
       this.scriptPath,
       "--text",
@@ -307,13 +299,6 @@ export class ChatterboxEngine implements ITTSEngine {
     if (validatedReferenceAudio) {
       args.push("--reference_audio", validatedReferenceAudio);
     }
-
-    args.push(
-      "--exaggeration",
-      String(exaggeration),
-      "--cfg_weight",
-      String(cfgWeight)
-    );
 
     logger.log("Python path:", this.pythonPath);
     logger.log("Script path:", this.scriptPath);

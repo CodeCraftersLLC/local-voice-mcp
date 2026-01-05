@@ -100,14 +100,10 @@ describe("TTSTools", () => {
       await ttsTools.synthesizeText({
         text: "Hello world",
         referenceAudio: refAudioPath,
-        exaggeration: 0.5,
-        cfg_weight: 1.2,
       });
 
       expect(mockTTSService.synthesize).toHaveBeenCalledWith("Hello world", {
         referenceAudio: refAudioPath, // Should be the resolved path
-        exaggeration: 0.5,
-        cfg_weight: 1.2,
       });
     });
 
@@ -574,7 +570,7 @@ describe("TTSTools", () => {
         expect(mockFs.unlinkSync).not.toHaveBeenCalled();
       });
 
-      it("should NOT delete file when deleteAfterPlay is undefined (default)", async () => {
+      it("should DELETE file when deleteAfterPlay is undefined (default is true)", async () => {
         const audioFile = require("path").join(
           require("os").tmpdir(),
           "local-voice-mcp",
@@ -582,6 +578,7 @@ describe("TTSTools", () => {
         );
         mockFs.existsSync.mockReturnValue(true);
         mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockReturnValue(undefined);
 
         const result = await ttsTools.playAudio({ audioFile });
 
@@ -590,9 +587,9 @@ describe("TTSTools", () => {
 
         const response = JSON.parse(result.content[0].text!);
         expect(response.success).toBe(true);
-        expect(response.fileDeleted).toBe(false);
-        expect(response.deleteMessage).toBeUndefined();
-        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+        expect(response.fileDeleted).toBe(true);
+        expect(response.deleteMessage).toContain("Successfully deleted audio file");
+        expect(mockFs.unlinkSync).toHaveBeenCalledWith(audioFile);
       });
 
       it("should handle deletion errors gracefully", async () => {
@@ -718,8 +715,6 @@ describe("TTSToolSchemas", () => {
       const validParams = {
         text: "Hello world",
         referenceAudio: "ref.wav",
-        exaggeration: 0.5,
-        cfg_weight: 1.2,
       };
 
       expect(() => {
@@ -727,10 +722,6 @@ describe("TTSToolSchemas", () => {
         TTSToolSchemas.synthesizeText.referenceAudio?.parse(
           validParams.referenceAudio
         );
-        TTSToolSchemas.synthesizeText.exaggeration?.parse(
-          validParams.exaggeration
-        );
-        TTSToolSchemas.synthesizeText.cfg_weight?.parse(validParams.cfg_weight);
       }).not.toThrow();
     });
 
@@ -740,25 +731,8 @@ describe("TTSToolSchemas", () => {
       }).toThrow();
     });
 
-    it("should reject invalid exaggeration values", () => {
-      expect(() => {
-        TTSToolSchemas.synthesizeText.exaggeration?.parse(-1);
-      }).toThrow();
-
-      expect(() => {
-        TTSToolSchemas.synthesizeText.exaggeration?.parse(3);
-      }).toThrow();
-    });
-
-    it("should reject invalid cfg_weight values", () => {
-      expect(() => {
-        TTSToolSchemas.synthesizeText.cfg_weight?.parse(-1);
-      }).toThrow();
-
-      expect(() => {
-        TTSToolSchemas.synthesizeText.cfg_weight?.parse(6);
-      }).toThrow();
-    });
+    // Note: Chatterbox Turbo no longer uses exaggeration or cfg_weight parameters.
+    // Use paralinguistic tags in text instead: [laugh], [sigh], [cough], etc.
   });
 
   describe("playAudio schema", () => {

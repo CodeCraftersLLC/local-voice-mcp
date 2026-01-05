@@ -8,17 +8,17 @@
 
 export interface TTSOptions {
   referenceAudio?: string;
-  
-  // Chatterbox-specific options
-  exaggeration?: number;
-  cfg_weight?: number;
-  
+
   // Kokoro-specific options
   speed?: number;
   language?: string;
   voice?: string;
   model_path?: string;
   voices_path?: string;
+
+  // Note: Chatterbox Turbo no longer uses exaggeration or cfg_weight parameters.
+  // Instead, use paralinguistic tags directly in the text, e.g.:
+  // "[laugh]", "[sigh]", "[cough]", "[chuckle]", "[gasp]", "[groan]", etc.
 }
 
 export interface TTSEngineStatus {

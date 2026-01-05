@@ -70,10 +70,11 @@ describe("TTSService", () => {
       delete process.env.TTS_ENGINE;
       const service = new TTSService();
       const status = await service.getStatus();
-      
+
       expect(status.engineName).toBe("chatterbox");
       expect(status.capabilities).toContain("voice-cloning");
-      expect(status.capabilities).toContain("prosody-control");
+      expect(status.capabilities).toContain("paralinguistic-tags");
+      expect(status.capabilities).toContain("multi-architecture");
     });
 
     it("should return kokoro capabilities when kokoro is selected", async () => {
@@ -90,27 +91,22 @@ describe("TTSService", () => {
   describe("Validation", () => {
     it("should validate Chatterbox-specific options", () => {
       const service = new TTSService();
-      
-      // Valid options should not throw
+
+      // Valid options should not throw (Chatterbox Turbo no longer uses exaggeration/cfg_weight)
       expect(() => {
         service["engine"].validateOptions({
-          exaggeration: 0.5,
-          cfg_weight: 1.0,
+          referenceAudio: "/path/to/audio.wav",
         });
       }).not.toThrow();
 
-      // Invalid exaggeration should throw
-      expect(() => {
-        service["engine"].validateOptions({
-          exaggeration: 3.0, // Out of range
-        });
-      }).toThrow();
+      // Note: Chatterbox Turbo uses paralinguistic tags in text instead of
+      // exaggeration/cfg_weight parameters: [laugh], [sigh], [cough], etc.
     });
 
     it("should validate Kokoro-specific options", () => {
       process.env.TTS_ENGINE = "kokoro";
       const service = new TTSService();
-      
+
       // Valid options should not throw
       expect(() => {
         service["engine"].validateOptions({
