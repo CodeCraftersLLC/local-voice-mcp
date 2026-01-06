@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-05
+
+### Added
+
+- **Chatterbox Turbo TTS**: Upgraded from ChatterboxTTS (500M params) to ChatterboxTurboTTS (350M params)
+  - Smaller model with less VRAM usage and faster inference
+  - Single-step decoder (reduced from 10 steps to 1) for lower latency
+  - Native paralinguistic tags support: `[laugh]`, `[sigh]`, `[cough]`, `[chuckle]`, `[gasp]`, `[groan]`, `[clear throat]`, `[sniff]`, `[shush]`
+- **Multi-Architecture Support**: Auto-detection of optimal backend based on available hardware
+  - MLX backend for Apple Silicon using `mlx-community/chatterbox-turbo-6bit` model
+  - PyTorch CUDA backend for NVIDIA GPUs
+  - PyTorch MPS backend for Apple Silicon without MLX
+  - PyTorch CPU fallback for systems without GPU acceleration
+- **Cross-Platform Temporary Directory Handling**: Uses `tempfile.gettempdir()` instead of hardcoded `/tmp` for Windows compatibility
+- **Enhanced Security Validation**: Path validation after absolute path conversion to prevent path traversal attacks
+
+### Changed
+
+- **API Breaking**: Removed `exaggeration` and `cfg_weight` parameters (replaced by paralinguistic tags in text)
+- **Default Behavior**: `deleteAfterPlay` now defaults to `true` instead of `false`
+- **Python Version**: Updated requirement to Python 3.10-3.12 (mlx-audio doesn't support Python 3.13+)
+- **Import Path**: Changed from `chatterbox.tts` to `chatterbox.tts_turbo`
+
+### Removed
+
+- `CHATTERBOX_EXAGGERATION` environment variable
+- `CHATTERBOX_CFG_WEIGHT` environment variable
+- `exaggeration` and `cfg_weight` from `TTSOptions` interface and MCP tool parameters
+
+### Fixed
+
+- Apple Silicon detection now uses `platform.machine()` instead of `platform.processor()` for reliable detection
+- MLX audio output path handling with proper temporary directory isolation
+- Symlink attack prevention in path validation
+- PyTorch device mapping for model loading on non-CUDA systems
+
+### Security
+
+- Re-added path validation after `os.path.abspath()` conversion in `generate_with_mlx()` to prevent path traversal attacks
+- Enhanced symlink validation in path components
+- Isolated temporary working directory for MLX audio generation
+
 ## [0.2.0] - 2025-11-02
 
 ### Added
