@@ -69,6 +69,10 @@ def generate_with_mlx(text, output_path, ref_audio=None):
     # Convert to absolute path before any directory changes to avoid path issues
     output_path = os.path.abspath(output_path)
 
+    # Re-validate the absolute path to prevent path traversal attacks
+    # This is critical because the path may resolve differently after os.path.abspath()
+    validate_output_path(output_path)
+
     # Get output directory and base name
     output_dir = os.path.dirname(output_path)
     output_basename = os.path.basename(output_path).replace(".wav", "")
