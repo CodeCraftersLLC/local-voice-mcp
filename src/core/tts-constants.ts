@@ -17,22 +17,31 @@ export const AUDIO_CONFIG = {
   CODEBOOK_SIZE: 4032,
 } as const;
 
-// Chatterbox TTS Constants
+// Chatterbox Turbo TTS Constants
+// Note: Chatterbox Turbo no longer uses exaggeration or cfg_weight.
+// Use paralinguistic tags in text instead: [laugh], [sigh], [cough], [chuckle], [gasp], [groan], etc.
 export const CHATTERBOX_DEFAULTS = {
   MAX_CHARACTERS: 2000,
-  EXAGGERATION: 0.2,
-  CFG_WEIGHT: 1.0,
   PLAYBACK_VOLUME: 50,
 } as const;
 
 export const CHATTERBOX_LIMITS = {
-  EXAGGERATION_MIN: 0,
-  EXAGGERATION_MAX: 2,
-  CFG_WEIGHT_MIN: 0,
-  CFG_WEIGHT_MAX: 5,
   VOLUME_MIN: 0,
   VOLUME_MAX: 100,
 } as const;
+
+// Supported paralinguistic tags for Chatterbox Turbo
+export const CHATTERBOX_PARALINGUISTIC_TAGS = [
+  "[clear throat]",
+  "[sigh]",
+  "[shush]",
+  "[cough]",
+  "[groan]",
+  "[sniff]",
+  "[gasp]",
+  "[chuckle]",
+  "[laugh]",
+] as const;
 
 // Kokoro TTS Constants
 export const KOKORO_DEFAULTS = {

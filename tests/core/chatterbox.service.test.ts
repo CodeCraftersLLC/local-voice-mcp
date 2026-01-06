@@ -292,8 +292,6 @@ describe("ChatterboxService", () => {
       chatterboxService = new ChatterboxService();
       // Clean up environment variables before each test
       delete process.env.CHATTERBOX_REFERENCE_AUDIO;
-      delete process.env.CHATTERBOX_EXAGGERATION;
-      delete process.env.CHATTERBOX_CFG_WEIGHT;
       delete process.env.CHATTERBOX_MAX_CHARACTERS;
       delete process.env.USE_MALE_VOICE;
     });
@@ -301,8 +299,6 @@ describe("ChatterboxService", () => {
     afterEach(() => {
       // Clean up environment variables after each test
       delete process.env.CHATTERBOX_REFERENCE_AUDIO;
-      delete process.env.CHATTERBOX_EXAGGERATION;
-      delete process.env.CHATTERBOX_CFG_WEIGHT;
       delete process.env.CHATTERBOX_MAX_CHARACTERS;
       delete process.env.USE_MALE_VOICE;
     });
@@ -380,10 +376,10 @@ describe("ChatterboxService", () => {
 
       await chatterboxService.synthesize("Test text", {
         referenceAudio: "test.wav",
-        exaggeration: 0.5,
-        cfg_weight: 1.5,
       });
 
+      // Chatterbox Turbo no longer uses exaggeration or cfg_weight
+      // These have been replaced by paralinguistic tags in text
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.arrayContaining([
@@ -391,10 +387,6 @@ describe("ChatterboxService", () => {
           "Test text",
           "--reference_audio",
           bundledPath,
-          "--exaggeration",
-          "0.5",
-          "--cfg_weight",
-          "1.5",
         ])
       );
     });
@@ -465,8 +457,6 @@ describe("ChatterboxService", () => {
     it("should use environment variables as defaults", async () => {
       // Set environment variables
       process.env.CHATTERBOX_REFERENCE_AUDIO = "env-reference.wav";
-      process.env.CHATTERBOX_EXAGGERATION = "0.8";
-      process.env.CHATTERBOX_CFG_WEIGHT = "2.0";
 
       const mockProcess = {
         stderr: { on: jest.fn() },
@@ -488,6 +478,7 @@ describe("ChatterboxService", () => {
 
       await chatterboxService.synthesize("Test text", {});
 
+      // Chatterbox Turbo no longer uses exaggeration or cfg_weight
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.arrayContaining([
@@ -495,10 +486,6 @@ describe("ChatterboxService", () => {
           "Test text",
           "--reference_audio",
           bundledPath,
-          "--exaggeration",
-          "0.8",
-          "--cfg_weight",
-          "2",
         ])
       );
     });
@@ -506,8 +493,6 @@ describe("ChatterboxService", () => {
     it("should prioritize options over environment variables", async () => {
       // Set environment variables
       process.env.CHATTERBOX_REFERENCE_AUDIO = "env-reference.wav";
-      process.env.CHATTERBOX_EXAGGERATION = "0.8";
-      process.env.CHATTERBOX_CFG_WEIGHT = "2.0";
 
       const mockProcess = {
         stderr: { on: jest.fn() },
@@ -529,10 +514,9 @@ describe("ChatterboxService", () => {
 
       await chatterboxService.synthesize("Test text", {
         referenceAudio: "option-reference.wav",
-        exaggeration: 0.3,
-        cfg_weight: 1.2,
       });
 
+      // Chatterbox Turbo no longer uses exaggeration or cfg_weight
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.arrayContaining([
@@ -540,10 +524,6 @@ describe("ChatterboxService", () => {
           "Test text",
           "--reference_audio",
           bundledPath,
-          "--exaggeration",
-          "0.3",
-          "--cfg_weight",
-          "1.2",
         ])
       );
     });
@@ -639,15 +619,12 @@ describe("ChatterboxService", () => {
 
       await chatterboxService.synthesize("Test text", {});
 
+      // Chatterbox Turbo no longer uses exaggeration or cfg_weight
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.any(String),
         expect.arrayContaining([
           "--text",
           "Test text",
-          "--exaggeration",
-          "0.2",
-          "--cfg_weight",
-          "1",
         ])
       );
 
@@ -748,10 +725,11 @@ describe("ChatterboxService", () => {
       expect(true).toBe(true); // Placeholder - actual play_audio tests should be in tools.test.ts
     });
 
-    it("should not delete file when deleteAfterPlay is false or undefined", async () => {
+    it("should not delete file when deleteAfterPlay is explicitly false", async () => {
       // This test would require mocking the TTSTools class and its playAudio method
       // Since we're testing the ChatterboxService, we'll focus on the core service functionality
       // The play_audio functionality is primarily in the MCP tools layer
+      // Note: deleteAfterPlay now defaults to true, so files are deleted by default
       expect(true).toBe(true); // Placeholder - actual play_audio tests should be in tools.test.ts
     });
   });

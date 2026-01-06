@@ -1,6 +1,6 @@
 {
   "name": "@codecraftersllc/local-voice-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "main": "dist/server.js",
   "mcpName": "io.github.CodeCraftersLLC/local-voice-mcp",
   "bin": {

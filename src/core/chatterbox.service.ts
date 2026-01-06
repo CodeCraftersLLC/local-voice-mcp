@@ -20,7 +20,12 @@ export class ChatterboxService {
   }
 
   private resolvePythonPath(): string {
-    // Implementation remains the same
+    // Allow overriding Python path via environment variable
+    // This is useful when using a conda environment with specific dependencies
+    const envPythonPath = process.env.PYTHON_PATH || process.env.CHATTERBOX_PYTHON_PATH;
+    if (envPythonPath) {
+      return envPythonPath;
+    }
     return "python3";
   }
 
@@ -189,12 +194,6 @@ export class ChatterboxService {
 
     const referenceAudio =
       options?.referenceAudio || process.env.CHATTERBOX_REFERENCE_AUDIO || "";
-    const exaggeration =
-      options?.exaggeration ??
-      parseFloat(process.env.CHATTERBOX_EXAGGERATION || "0.2");
-    const cfgWeight =
-      options?.cfg_weight ??
-      parseFloat(process.env.CHATTERBOX_CFG_WEIGHT || "1");
 
     // Create output directory if it doesn't exist
     const outputDir =
@@ -255,6 +254,7 @@ export class ChatterboxService {
     }
 
     // Prepare arguments for the Python script
+    // Note: Chatterbox Turbo uses paralinguistic tags in text instead of exaggeration/cfg_weight
     const args = [
       this.scriptPath,
       "--text",
@@ -267,13 +267,6 @@ export class ChatterboxService {
     if (validatedReferenceAudio) {
       args.push("--reference_audio", validatedReferenceAudio);
     }
-
-    args.push(
-      "--exaggeration",
-      String(exaggeration),
-      "--cfg_weight",
-      String(cfgWeight)
-    );
 
     logger.log("Python path:", this.pythonPath);
     logger.log("Script path:", this.scriptPath);

@@ -1,10 +1,10 @@
 # Local Voice MCP
 
-Give your MCP clients the ability to speak by running local voice models using Chatterbox TTS or Kokoro TTS.
+Give your MCP clients the ability to speak by running local voice models using Chatterbox Turbo TTS or Kokoro TTS.
 
 ## Quickstart
 
-The package includes a high-quality female reference voice that's used by default with Chatterbox TTS. All environment variables are optional.
+The package includes a high-quality female reference voice that's used by default with Chatterbox Turbo TTS. All environment variables are optional.
 
 ```json
 {
@@ -14,8 +14,6 @@ The package includes a high-quality female reference voice that's used by defaul
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
         "USE_MALE_VOICE": "false",
-        "CHATTERBOX_EXAGGERATION": "0.5",
-        "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "2000",
         "CHATTERBOX_PLAYBACK_VOLUME": "75"
       }
@@ -28,14 +26,18 @@ The package includes a high-quality female reference voice that's used by defaul
 
 Local Voice MCP supports two TTS engines:
 
-### Chatterbox TTS (Default)
+### Chatterbox Turbo TTS (Default)
 
-High-quality voice synthesis with voice cloning support. Works on all platforms.
+High-quality voice synthesis with voice cloning support and paralinguistic tags. Automatically detects and uses the optimal backend for your hardware.
 
 - ✅ Cross-platform support (macOS, Windows, Linux)
 - ✅ Voice cloning with reference audio
-- ✅ Prosody controls (exaggeration, cfg_weight)
-- ✅ High-quality output
+- ✅ Paralinguistic tags for expressive speech (`[laugh]`, `[sigh]`, `[cough]`, etc.)
+- ✅ Multi-architecture auto-detection:
+  - Apple Silicon (MPS): Uses MLX with `mlx-community/chatterbox-turbo-6bit`
+  - NVIDIA GPU (CUDA): Uses PyTorch with `ChatterboxTurboTTS`
+  - CPU: Uses PyTorch fallback
+- ✅ Smaller model (350M params) with lower latency
 
 ### Kokoro TTS (Cross-Platform)
 
@@ -118,9 +120,10 @@ KOKORO_VOICE="am_adam,af_sarah"
 
 - **MCP Server Implementation**: Full Model Context Protocol server using `@modelcontextprotocol/sdk`
 - **HTTP API**: ElevenLabs-compatible REST API for direct integration
-- **Text-to-Speech Synthesis**: High-quality voice synthesis using Chatterbox TTS
+- **Text-to-Speech Synthesis**: High-quality voice synthesis using Chatterbox Turbo TTS
 - **Voice Cloning**: Support for reference audio for voice cloning
-- **Prosody Controls**: Adjustable exaggeration and configuration weights
+- **Paralinguistic Tags**: Add expressive elements like `[laugh]`, `[sigh]`, `[cough]` directly in text
+- **Multi-Architecture Support**: Auto-detects and uses optimal backend (MLX for Apple Silicon, CUDA for NVIDIA, CPU fallback)
 - **Volume Control**: Configurable audio playback volume with cross-platform support
 - **Robust File Management**: Automatic cleanup of temporary audio files
 - **Security**: Path validation and sanitization to prevent directory traversal
@@ -201,11 +204,11 @@ Converts text to speech and returns audio data using the configured TTS engine.
 
 - `text` (string, required): Text to synthesize
 
-**Chatterbox-Specific Parameters:**
+**Chatterbox Turbo-Specific Parameters:**
 
 - `referenceAudio` (string, optional): Path to reference audio for voice cloning
-- `exaggeration` (number, optional): Voice style exaggeration (0-2, default: 0.2)
-- `cfg_weight` (number, optional): Configuration weight (0-5, default: 1.0)
+
+**Note:** Chatterbox Turbo uses paralinguistic tags directly in text instead of prosody parameters. Include tags like `[laugh]`, `[sigh]`, `[cough]`, `[chuckle]`, `[gasp]`, `[groan]`, `[clear throat]`, `[sniff]`, `[shush]` in your text for expressive speech.
 
 **Kokoro-Specific Parameters:**
 
@@ -230,10 +233,7 @@ Converts text to speech and returns audio data using the configured TTS engine.
   "audioFormat": "wav",
   "engine": "chatterbox",
   "engineName": "chatterbox",
-  "options": {
-    "exaggeration": 0.2,
-    "cfg_weight": 1.0
-  },
+  "options": {},
   "generatedAt": "2024-01-15T10:30:00.000Z"
 }
 ```
@@ -334,11 +334,9 @@ ElevenLabs-compatible text-to-speech endpoint.
 
 ```json
 {
-  "text": "Hello, world!",
+  "text": "[sigh] Hello, world! [laugh] This is great!",
   "options": {
-    "referenceAudio": "path/to/reference.wav",
-    "exaggeration": 0.5,
-    "cfg_weight": 1.2
+    "referenceAudio": "path/to/reference.wav"
   }
 }
 ```
@@ -361,17 +359,20 @@ ElevenLabs-compatible text-to-speech endpoint.
 
 - `TTS_ENGINE`: TTS engine to use - "chatterbox", "kani-mlx", or "kokoro" (default: "chatterbox")
 
-#### Chatterbox TTS Configuration
+#### Chatterbox Turbo TTS Configuration
 
-These environment variables can be used to set default values for Chatterbox TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
+These environment variables can be used to set default values for Chatterbox Turbo TTS synthesis. They will be used if not overridden by options passed to the synthesize method:
 
+- `PYTHON_PATH`: Path to Python interpreter (default: "python3"). **Important:** If using Apple Silicon with Python 3.13+, point this to a conda environment with Python 3.11-3.12 where mlx-audio is installed.
 - `CHATTERBOX_REFERENCE_AUDIO`: Path to reference audio file for voice cloning (can be anywhere on your system, supports .wav, .mp3, .flac, .ogg, .m4a, .aac). If not specified, uses the bundled high-quality female reference voice.
 - `USE_MALE_VOICE`: Use male voice instead of bundled female reference voice (true/false, default: false). When set to true, uses the default Chatterbox male voice instead of the bundled female voice. This only applies when no custom reference audio is specified.
-- `CHATTERBOX_EXAGGERATION`: Voice style exaggeration level (float, default: 0.2)
-- `CHATTERBOX_CFG_WEIGHT`: Configuration weight for TTS model (float, default: 1.0)
 - `CHATTERBOX_MAX_CHARACTERS`: Maximum number of characters allowed for text input (integer, default: 2000)
 - `CHATTERBOX_OUTPUT_DIR`: Output directory for generated audio files (default: system temp + "local-voice-mcp")
 - `CHATTERBOX_PLAYBACK_VOLUME`: Default audio playback volume as percentage (integer, 0-100, default: 50)
+
+**Paralinguistic Tags:** Instead of prosody controls, use paralinguistic tags directly in your text: `[laugh]`, `[sigh]`, `[cough]`, `[chuckle]`, `[gasp]`, `[groan]`, `[clear throat]`, `[sniff]`, `[shush]`
+
+**Example:** `"[sigh] I can't believe it's Monday again. [laugh] But let's make the best of it!"`
 
 #### Kokoro Configuration
 
@@ -392,8 +393,6 @@ These environment variables can be used to set default values for Kokoro synthes
 # Set default TTS parameters via environment variables
 # Reference audio can be anywhere on your system
 export CHATTERBOX_REFERENCE_AUDIO="/Users/john/Music/my-voice.wav"
-export CHATTERBOX_EXAGGERATION="0.5"
-export CHATTERBOX_CFG_WEIGHT="1.2"
 export CHATTERBOX_MAX_CHARACTERS="3000"
 export CHATTERBOX_PLAYBACK_VOLUME="75"
 
@@ -411,8 +410,6 @@ local-voice-mcp-server
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
         "CHATTERBOX_REFERENCE_AUDIO": "/Users/john/Music/my-voice.wav",
-        "CHATTERBOX_EXAGGERATION": "0.5",
-        "CHATTERBOX_CFG_WEIGHT": "1.2",
         "CHATTERBOX_MAX_CHARACTERS": "3000",
         "CHATTERBOX_PLAYBACK_VOLUME": "75"
       }
@@ -430,9 +427,7 @@ local-voice-mcp-server
       "command": "npx",
       "args": ["-y", "@codecraftersllc/local-voice-mcp"],
       "env": {
-        "USE_MALE_VOICE": "true",
-        "CHATTERBOX_EXAGGERATION": "0.3",
-        "CHATTERBOX_CFG_WEIGHT": "1.0"
+        "USE_MALE_VOICE": "true"
       }
     }
   }
@@ -530,10 +525,10 @@ Once Cursor is restarted, you can test the TTS functionality:
    What's the status of the TTS service?
    ```
 
-4. **Test with options**:
+4. **Test with paralinguistic tags**:
 
    ```
-   Synthesize "Welcome to the future of AI coding" with exaggeration set to 0.5
+   Synthesize "[sigh] Welcome to the future of AI coding. [laugh] It's going to be amazing!"
    ```
 
 5. **Test audio playback**:
@@ -572,7 +567,7 @@ When working correctly:
 - Cursor will be able to call the TTS tools
 - You'll receive structured JSON responses with file paths
 - Audio files will be saved to the temporary directory
-- The TTS service will use the Chatterbox TTS engine
+- The TTS service will use the Chatterbox Turbo TTS engine
 - Files can be played using system audio players
 
 All responses are in structured JSON format with clear file paths, making it easy for MCP clients and AI agents to understand and work with the results.
@@ -580,11 +575,44 @@ All responses are in structured JSON format with clear file paths, making it eas
 ## Requirements
 
 - Node.js 16+
-- Python 3.8+
-- PyTorch
-- Chatterbox TTS
+- Python 3.10-3.12 (Python 3.13+ not yet supported by mlx-audio dependencies)
+- PyTorch (for CUDA/CPU backends)
+- For Apple Silicon: `pip install mlx-audio`
+- For CUDA/CPU: `pip install chatterbox-tts`
 
-The service automatically sets up the Python environment and installs required dependencies on first run.
+**Important for Apple Silicon users:** The `mlx-audio` package requires Python <3.13 due to dependency constraints. If your system Python is 3.13+, you'll need to use a conda environment:
+
+```bash
+# Create a Python 3.11 environment for Chatterbox
+conda create -n chatterbox python=3.11
+conda activate chatterbox
+pip install mlx-audio
+
+# Then set PYTHON_PATH in your MCP config to point to this environment
+```
+
+```json
+{
+  "mcpServers": {
+    "local-voice-mcp": {
+      "command": "npx",
+      "args": ["-y", "@codecraftersllc/local-voice-mcp"],
+      "env": {
+        "TTS_ENGINE": "chatterbox",
+        "PYTHON_PATH": "/path/to/miniconda3/envs/chatterbox/bin/python"
+      }
+    }
+  }
+}
+```
+
+The service automatically detects your hardware and uses the optimal backend:
+
+| Platform | Backend | Model |
+|----------|---------|-------|
+| Apple Silicon (via MLX) | MLX | `mlx-community/chatterbox-turbo-6bit` |
+| NVIDIA GPU (CUDA) | PyTorch | `ChatterboxTurboTTS` |
+| CPU | PyTorch | `ChatterboxTurboTTS` (slower) |
 
 ## Architecture
 
@@ -616,7 +644,7 @@ The service automatically sets up the Python environment and installs required d
                                    ▼
                         ┌─────────────────────┐
                         │   Python TTS        │
-                        │  (Chatterbox)       │
+                        │ (Chatterbox Turbo)  │
                         └─────────────────────┘
 ```
 
