@@ -57,28 +57,17 @@ def detect_backend():
 
 
 def generate_with_mlx(text, output_path, ref_audio=None):
-    """Generate audio using MLX backend (Apple Silicon optimized)."""
+    """Generate audio using MLX backend (Apple Silicon optimized).
+
+    Note: Security validation of output_path is performed by validate_output_path()
+    in main() before this function is called.
+    """
     from mlx_audio.tts.generate import generate_audio
 
     logger.info("Generating audio with MLX backend (chatterbox-turbo-6bit)")
 
     # Convert to absolute path before any directory changes to avoid path issues
     output_path = os.path.abspath(output_path)
-
-    # Validate output path is within allowed temp directory (security check)
-    base_temp = os.path.realpath(tempfile.gettempdir())
-    output_real = os.path.realpath(os.path.dirname(output_path))
-
-    # Ensure output directory is within temp directory
-    try:
-        if os.path.commonpath([output_real, base_temp]) != base_temp:
-            raise ValueError(f"Output path must reside within the system temporary directory: {base_temp}")
-    except ValueError as e:
-        if "different drives" not in str(e).lower():
-            raise
-        # On Windows, paths may be on different drives
-        if not output_real.startswith(base_temp):
-            raise ValueError(f"Output path must reside within the system temporary directory: {base_temp}")
 
     # Get output directory and base name
     output_dir = os.path.dirname(output_path)
@@ -88,7 +77,9 @@ def generate_with_mlx(text, output_path, ref_audio=None):
     original_cwd = os.getcwd()
 
     # Use an isolated temporary working directory for generation
-    safe_work_dir = tempfile.mkdtemp(prefix="mlx_audio_", dir=base_temp)
+    # Create in system temp dir for security (validated by validate_output_path in main)
+    system_temp = tempfile.gettempdir()
+    safe_work_dir = tempfile.mkdtemp(prefix="mlx_audio_", dir=system_temp)
 
     try:
         # Change to safe working directory
@@ -185,16 +176,13 @@ def generate_with_pytorch(text, output_path, ref_audio=None, device="cuda"):
 
 def validate_output_path(output_path):
     """Validate that output path is within an allowed temporary directory."""
-    # Get allowed temporary directories
+    # Get allowed temporary directories using only the cross-platform tempfile module
+    # This avoids hardcoding Unix-specific paths like /tmp
     allowed_temp_dirs = []
 
-    # User-specific temp directory (e.g., /var/folders/.../T on macOS)
-    user_temp = os.path.realpath(tempfile.gettempdir())
-    allowed_temp_dirs.append(user_temp)
-
-    # Standard /tmp directory (common on Unix systems)
-    if os.path.exists("/tmp"):
-        allowed_temp_dirs.append(os.path.realpath("/tmp"))
+    # System temp directory (cross-platform: /tmp on Unix, %TEMP% on Windows)
+    system_temp = os.path.realpath(tempfile.gettempdir())
+    allowed_temp_dirs.append(system_temp)
 
     # Resolve the output path to handle symlinks
     output_real = os.path.realpath(output_path)

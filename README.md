@@ -575,7 +575,7 @@ All responses are in structured JSON format with clear file paths, making it eas
 ## Requirements
 
 - Node.js 16+
-- Python 3.8-3.12 (Python 3.13+ not yet supported by mlx-audio dependencies)
+- Python 3.10-3.12 (Python 3.13+ not yet supported by mlx-audio dependencies)
 - PyTorch (for CUDA/CPU backends)
 - For Apple Silicon: `pip install mlx-audio`
 - For CUDA/CPU: `pip install chatterbox-tts`
