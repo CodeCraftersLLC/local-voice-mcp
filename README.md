@@ -610,7 +610,7 @@ The service automatically detects your hardware and uses the optimal backend:
 
 | Platform | Backend | Model |
 |----------|---------|-------|
-| Apple Silicon (MPS) | MLX | `mlx-community/chatterbox-turbo-6bit` |
+| Apple Silicon (via MLX) | MLX | `mlx-community/chatterbox-turbo-6bit` |
 | NVIDIA GPU (CUDA) | PyTorch | `ChatterboxTurboTTS` |
 | CPU | PyTorch | `ChatterboxTurboTTS` (slower) |
 

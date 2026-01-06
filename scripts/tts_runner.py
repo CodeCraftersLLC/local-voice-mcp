@@ -1,4 +1,5 @@
 import argparse
+import glob
 import logging
 import os
 import platform
@@ -21,20 +22,25 @@ def detect_backend():
     4. CPU (fallback)
     """
     # Check for Apple Silicon with MLX
-    if platform.system() == "Darwin" and platform.processor() == "arm":
+    # Use platform.machine() which reliably returns "arm64" on Apple Silicon
+    if platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64"):
         try:
             import mlx.core
+            import mlx_audio  # Also verify mlx_audio is available
             logger.info("MLX detected - using mlx-audio backend for Apple Silicon")
             return "mlx"
-        except ImportError:
-            logger.info("MLX not installed, checking for PyTorch MPS")
+        except ImportError as e:
+            logger.info(f"MLX or mlx_audio not installed ({e}), checking for PyTorch MPS")
 
     # Import torch for CUDA/MPS/CPU detection
     try:
         import torch
     except ImportError:
-        logger.warning("PyTorch not installed, falling back to CPU mode")
-        return "cpu"
+        logger.error(
+            "PyTorch is not installed. PyTorch is required for CUDA, MPS, and CPU backends. "
+            "Please install PyTorch or mlx-audio (for Apple Silicon) to use this TTS script."
+        )
+        raise RuntimeError("PyTorch is required but not installed. Install with: pip install torch torchaudio")
 
     # Check for CUDA
     if torch.cuda.is_available():
@@ -56,6 +62,24 @@ def generate_with_mlx(text, output_path, ref_audio=None):
 
     logger.info("Generating audio with MLX backend (chatterbox-turbo-6bit)")
 
+    # Convert to absolute path before any directory changes to avoid path issues
+    output_path = os.path.abspath(output_path)
+
+    # Validate output path is within allowed temp directory (security check)
+    base_temp = os.path.realpath(tempfile.gettempdir())
+    output_real = os.path.realpath(os.path.dirname(output_path))
+
+    # Ensure output directory is within temp directory
+    try:
+        if os.path.commonpath([output_real, base_temp]) != base_temp:
+            raise ValueError(f"Output path must reside within the system temporary directory: {base_temp}")
+    except ValueError as e:
+        if "different drives" not in str(e).lower():
+            raise
+        # On Windows, paths may be on different drives
+        if not output_real.startswith(base_temp):
+            raise ValueError(f"Output path must reside within the system temporary directory: {base_temp}")
+
     # Get output directory and base name
     output_dir = os.path.dirname(output_path)
     output_basename = os.path.basename(output_path).replace(".wav", "")
@@ -63,11 +87,16 @@ def generate_with_mlx(text, output_path, ref_audio=None):
     # Save the current working directory
     original_cwd = os.getcwd()
 
+    # Use an isolated temporary working directory for generation
+    safe_work_dir = tempfile.mkdtemp(prefix="mlx_audio_", dir=base_temp)
+
     try:
-        # Change to output directory so mlx_audio saves there
+        # Change to safe working directory
+        os.chdir(safe_work_dir)
+
+        # Ensure output directory exists
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-            os.chdir(output_dir)
 
         # Generate audio - mlx_audio saves files in current directory with pattern {prefix}_000.wav
         generate_audio(
@@ -80,23 +109,37 @@ def generate_with_mlx(text, output_path, ref_audio=None):
             verbose=True
         )
 
-        # mlx_audio saves with _000 suffix in current directory
-        mlx_output_file = f"{output_basename}_000.wav"
-        mlx_output_alt = f"{output_basename}.wav"
+        # Find the generated file using glob pattern (more robust than hardcoded names)
+        generated_files = glob.glob(f"{output_basename}*.wav")
 
-        # Find the generated file and rename to expected output
-        if os.path.exists(mlx_output_file):
-            shutil.move(mlx_output_file, output_path)
-            logger.info(f"Moved output from {mlx_output_file} to {output_path}")
-        elif os.path.exists(mlx_output_alt):
-            shutil.move(mlx_output_alt, output_path)
-            logger.info(f"Moved output from {mlx_output_alt} to {output_path}")
+        if not generated_files:
+            raise FileNotFoundError(
+                f"MLX audio output not found with prefix '{output_basename}' in {safe_work_dir}"
+            )
+
+        # With join_audio=True, we expect one file
+        generated_file = generated_files[0]
+        src_abs = os.path.join(safe_work_dir, generated_file)
+
+        # Security check: ensure destination is not a symlink
+        if os.path.exists(output_path) and os.path.islink(output_path):
+            raise ValueError("Destination path is a symlink; refusing to overwrite")
+
+        # Check if source and destination are different before moving
+        if os.path.abspath(src_abs) != os.path.abspath(output_path):
+            shutil.move(src_abs, output_path)
+            logger.info(f"Moved output from {generated_file} to {output_path}")
         else:
-            raise FileNotFoundError(f"MLX audio output not found at {mlx_output_file} or {mlx_output_alt}")
+            logger.info(f"Output file already at correct location: {output_path}")
 
     finally:
         # Restore original working directory
         os.chdir(original_cwd)
+        # Clean up temporary working directory
+        try:
+            shutil.rmtree(safe_work_dir)
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp directory {safe_work_dir}: {e}")
 
 
 def generate_with_pytorch(text, output_path, ref_audio=None, device="cuda"):
@@ -142,13 +185,6 @@ def generate_with_pytorch(text, output_path, ref_audio=None, device="cuda"):
 
 def validate_output_path(output_path):
     """Validate that output path is within an allowed temporary directory."""
-    output_real = os.path.realpath(output_path)
-
-    # Prevent symlink attacks: ensure output is not a symlink
-    if os.path.islink(output_path):
-        logger.error(f"Output path {output_path} is a symlink, which is not allowed")
-        raise ValueError("Output path cannot be a symlink")
-
     # Get allowed temporary directories
     allowed_temp_dirs = []
 
@@ -160,15 +196,21 @@ def validate_output_path(output_path):
     if os.path.exists("/tmp"):
         allowed_temp_dirs.append(os.path.realpath("/tmp"))
 
+    # Resolve the output path to handle symlinks
+    output_real = os.path.realpath(output_path)
+
     # Check if output is within any allowed temp directory
     is_valid = False
+    matched_temp_dir = None
     for temp_dir in allowed_temp_dirs:
         if output_real.startswith(temp_dir + os.sep) or output_real == temp_dir:
             is_valid = True
+            matched_temp_dir = temp_dir
             break
         try:
             if os.path.commonpath([output_real, temp_dir]) == temp_dir:
                 is_valid = True
+                matched_temp_dir = temp_dir
                 break
         except ValueError:
             # commonpath raises ValueError if paths are on different drives (Windows)
@@ -178,6 +220,21 @@ def validate_output_path(output_path):
         logger.error(f"Output path {output_path} is not within any allowed temporary directory")
         logger.error(f"Allowed directories: {allowed_temp_dirs}")
         raise ValueError("Invalid output path")
+
+    # Check for symlinks in path components between temp dir and output
+    # This prevents symlink attacks where a directory component is a symlink
+    if matched_temp_dir:
+        rel_path = os.path.relpath(output_real, matched_temp_dir)
+        if not rel_path.startswith(".."):
+            current = matched_temp_dir
+            for part in rel_path.split(os.sep):
+                if not part or part == ".":
+                    continue
+                current = os.path.join(current, part)
+                # Only check existing path components
+                if os.path.exists(current) and os.path.islink(current):
+                    logger.error(f"Path component {current} is a symlink, which is not allowed")
+                    raise ValueError(f"Path contains symlinked component: {current}")
 
 
 def main():
