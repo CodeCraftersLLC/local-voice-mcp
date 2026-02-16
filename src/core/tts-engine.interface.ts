@@ -16,6 +16,12 @@ export interface TTSOptions {
   model_path?: string;
   voices_path?: string;
 
+  // Kani TTS 2-specific options
+  temperature?: number;
+  top_p?: number;
+  repetition_penalty?: number;
+  model?: string; // HuggingFace model name
+
   // Note: Chatterbox Turbo no longer uses exaggeration or cfg_weight parameters.
   // Instead, use paralinguistic tags directly in the text, e.g.:
   // "[laugh]", "[sigh]", "[cough]", "[chuckle]", "[gasp]", "[groan]", etc.

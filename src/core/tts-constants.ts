@@ -57,3 +57,21 @@ export const KOKORO_LIMITS = {
   SPEED_MIN: 0.5,
   SPEED_MAX: 2.0,
 } as const;
+
+// Kani TTS 2 Constants
+export const KANI_DEFAULTS = {
+  MAX_CHARACTERS: 2000,
+  MODEL: "nineninesix/kani-tts-2-en",
+  TEMPERATURE: 1.0,
+  TOP_P: 0.95,
+  REPETITION_PENALTY: 1.1,
+} as const;
+
+export const KANI_LIMITS = {
+  TEMPERATURE_MIN: 0.0,
+  TEMPERATURE_MAX: 1.0,
+  TOP_P_MIN: 0.0,
+  TOP_P_MAX: 1.0,
+  REPETITION_PENALTY_MIN: 1.0,
+  REPETITION_PENALTY_MAX: 2.0,
+} as const;

@@ -8,9 +8,10 @@
 import { ITTSEngine, TTSOptions, TTSEngineStatus } from "./tts-engine.interface";
 import { ChatterboxEngine } from "./chatterbox.engine";
 import { KokoroEngine } from "./kokoro.engine";
+import { KaniEngine } from "./kani.engine";
 import { logger } from "../utils/logger";
 
-export type TTSEngineType = "chatterbox" | "kokoro";
+export type TTSEngineType = "chatterbox" | "kokoro" | "kani";
 
 export class TTSService {
   private engine: ITTSEngine;
@@ -24,6 +25,8 @@ export class TTSService {
     // Validate and set engine type
     if (envEngine === "kokoro") {
       this.engineType = "kokoro";
+    } else if (envEngine === "kani") {
+      this.engineType = "kani";
     } else if (envEngine && envEngine !== "chatterbox") {
       logger.warn(
         `Unknown TTS engine: ${envEngine}. Defaulting to chatterbox.`
@@ -40,6 +43,9 @@ export class TTSService {
         break;
       case "kokoro":
         this.engine = new KokoroEngine();
+        break;
+      case "kani":
+        this.engine = new KaniEngine();
         break;
       default:
         // This should never happen due to validation above
