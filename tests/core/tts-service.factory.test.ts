@@ -53,6 +53,19 @@ describe("TTSService", () => {
       const service = new TTSService();
       expect(service.getEngineType()).toBe("kokoro");
     });
+
+    it("should use kani engine when TTS_ENGINE is set to kani", () => {
+      process.env.TTS_ENGINE = "kani";
+      const service = new TTSService();
+      expect(service.getEngineType()).toBe("kani");
+      expect(service.getEngineName()).toBe("kani");
+    });
+
+    it("should handle case-insensitive kani engine name", () => {
+      process.env.TTS_ENGINE = "KANI";
+      const service = new TTSService();
+      expect(service.getEngineType()).toBe("kani");
+    });
   });
 
   describe("Engine Interface", () => {
@@ -81,10 +94,22 @@ describe("TTSService", () => {
       process.env.TTS_ENGINE = "kokoro";
       const service = new TTSService();
       const status = await service.getStatus();
-      
+
       expect(status.engineName).toBe("kokoro");
       expect(status.capabilities).toContain("multi-language");
       expect(status.capabilities).toContain("multi-voice");
+    });
+
+    it("should return kani capabilities when kani is selected", async () => {
+      process.env.TTS_ENGINE = "kani";
+      const service = new TTSService();
+      const status = await service.getStatus();
+
+      expect(status.engineName).toBe("kani");
+      expect(status.capabilities).toContain("voice-cloning");
+      expect(status.capabilities).toContain("speaker-embeddings");
+      expect(status.capabilities).toContain("temperature-control");
+      expect(status.capabilities).toContain("huggingface-models");
     });
   });
 
@@ -121,6 +146,53 @@ describe("TTSService", () => {
           speed: 3.0, // Out of range
         });
       }).toThrow();
+    });
+
+    it("should validate Kani-specific options", () => {
+      process.env.TTS_ENGINE = "kani";
+      const service = new TTSService();
+
+      // Valid options should not throw
+      expect(() => {
+        service["engine"].validateOptions({
+          temperature: 0.7,
+          top_p: 0.95,
+          repetition_penalty: 1.1,
+        });
+      }).not.toThrow();
+
+      // Invalid temperature should throw
+      expect(() => {
+        service["engine"].validateOptions({
+          temperature: 1.5, // Out of range
+        });
+      }).toThrow();
+
+      // Invalid top_p should throw
+      expect(() => {
+        service["engine"].validateOptions({
+          top_p: -0.1, // Out of range
+        });
+      }).toThrow();
+
+      // Invalid repetition_penalty should throw
+      expect(() => {
+        service["engine"].validateOptions({
+          repetition_penalty: 0.5, // Out of range (min is 1.0)
+        });
+      }).toThrow();
+    });
+
+    it("should accept valid Kani voice cloning options", () => {
+      process.env.TTS_ENGINE = "kani";
+      const service = new TTSService();
+
+      expect(() => {
+        service["engine"].validateOptions({
+          referenceAudio: "/path/to/reference.wav",
+          temperature: 0.5,
+        });
+      }).not.toThrow();
     });
   });
 });

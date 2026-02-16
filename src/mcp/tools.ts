@@ -70,6 +70,10 @@ export class TTSTools {
     voice?: string;
     model_path?: string;
     voices_path?: string;
+    temperature?: number;
+    top_p?: number;
+    repetition_penalty?: number;
+    model?: string;
   }) {
     const {
       text,
@@ -79,6 +83,10 @@ export class TTSTools {
       voice,
       model_path,
       voices_path,
+      temperature,
+      top_p,
+      repetition_penalty,
+      model,
     } = params;
 
     // Validate text (existing logic is fine)
@@ -127,6 +135,10 @@ export class TTSTools {
         voice,
         model_path,
         voices_path,
+        temperature,
+        top_p,
+        repetition_penalty,
+        model,
       });
 
       // Validate audio path is within TEMP_AUDIO_DIR (security check for output)
@@ -161,6 +173,10 @@ export class TTSTools {
                     voice,
                     model_path,
                     voices_path,
+                    temperature,
+                    top_p,
+                    repetition_penalty,
+                    model,
                   }).filter(([_, v]) => v !== undefined)
                 ),
                 generatedAt: new Date().toISOString(),
@@ -713,7 +729,7 @@ export interface Tool {
 const synthesizeTextTool: Tool = {
   name: "synthesize_text",
   description:
-    "Convert text to speech using the configured TTS engine (Chatterbox Turbo or Kokoro). For Chatterbox Turbo, use paralinguistic tags directly in text for expressive speech: [laugh], [sigh], [cough], [chuckle], [gasp], [groan], [clear throat], [sniff], [shush]. Supports voice cloning via reference audio.",
+    "Convert text to speech using the configured TTS engine (Chatterbox Turbo, Kokoro, or Kani TTS 2). For Chatterbox Turbo, use paralinguistic tags directly in text for expressive speech: [laugh], [sigh], [cough], [chuckle], [gasp], [groan], [clear throat], [sniff], [shush]. Supports voice cloning via reference audio (Chatterbox and Kani).",
   inputSchema: {
     type: "object",
     properties: {
@@ -725,7 +741,7 @@ const synthesizeTextTool: Tool = {
       // Chatterbox-specific parameters
       referenceAudio: {
         type: "string",
-        description: "Optional path to reference audio file for voice cloning (Chatterbox only).",
+        description: "Optional path to reference audio file for voice cloning (Chatterbox and Kani TTS 2). For Kani, 3-30 seconds of reference audio is recommended.",
       },
       // Kokoro-specific parameters
       speed: {
@@ -754,6 +770,33 @@ const synthesizeTextTool: Tool = {
         type: "string",
         description:
           "Path to Kokoro voices bin file (default: 'voices-v1.0.bin', Kokoro only).",
+      },
+      // Kani TTS 2-specific parameters
+      temperature: {
+        type: "number",
+        description:
+          "Sampling temperature (0.0 to 1.0, default: 1.0, Kani only). Lower values produce more deterministic speech.",
+        minimum: 0.0,
+        maximum: 1.0,
+      },
+      top_p: {
+        type: "number",
+        description:
+          "Top-p nucleus sampling (0.0 to 1.0, default: 0.95, Kani only).",
+        minimum: 0.0,
+        maximum: 1.0,
+      },
+      repetition_penalty: {
+        type: "number",
+        description:
+          "Repetition penalty (1.0 to 2.0, default: 1.1, Kani only). Higher values reduce repetitive artifacts.",
+        minimum: 1.0,
+        maximum: 2.0,
+      },
+      model: {
+        type: "string",
+        description:
+          "HuggingFace model name for Kani TTS 2 (default: 'nineninesix/kani-tts-2-en', Kani only).",
       },
     },
     required: ["text"],
@@ -822,6 +865,10 @@ export const TTSToolSchemas = {
   synthesizeText: {
     text: z.string().min(1, "Text cannot be empty"),
     referenceAudio: z.string().optional(),
+    temperature: z.number().min(0).max(1).optional(),
+    top_p: z.number().min(0).max(1).optional(),
+    repetition_penalty: z.number().min(1).max(2).optional(),
+    model: z.string().optional(),
     // Note: exaggeration and cfg_weight removed in Chatterbox Turbo
     // Use paralinguistic tags in text instead: [laugh], [sigh], [cough], etc.
   },
