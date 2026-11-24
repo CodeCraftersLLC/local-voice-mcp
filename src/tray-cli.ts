@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -8,16 +8,35 @@ import {
   getQuietModeStatus,
   getUserConfigPath,
   loadUserConfig,
+  loadUserConfigStrict,
   UserConfig,
 } from "./utils/user-config";
 
 function resolvePythonPath(): string {
-  return (
+  const explicit =
     process.env.TRAY_PYTHON_PATH ||
     process.env.PYTHON_PATH ||
-    process.env.CHATTERBOX_PYTHON_PATH ||
-    "python3"
-  );
+    process.env.CHATTERBOX_PYTHON_PATH;
+  if (explicit) {
+    return explicit;
+  }
+
+  const candidates =
+    process.platform === "win32"
+      ? ["python", "py", "python3"]
+      : ["python3", "python"];
+
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ["--version"], {
+      stdio: "ignore",
+      timeout: 3000,
+    });
+    if (!probe.error && probe.status === 0) {
+      return candidate;
+    }
+  }
+
+  return process.platform === "win32" ? "python" : "python3";
 }
 
 function getPidFilePath(): string {
@@ -31,6 +50,50 @@ function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
+  } catch (err: any) {
+    return Boolean(err && err.code === "EPERM");
+  }
+}
+
+/**
+ * Verify that a live PID is actually running tray_app.py before signalling it,
+ * preventing accidental signals to an unrelated process after PID reuse.
+ */
+function isTrayProcess(pid: number): boolean {
+  if (!isPidRunning(pid)) {
+    return false;
+  }
+
+  try {
+    if (process.platform === "win32") {
+      const probe = spawnSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+        ],
+        { encoding: "utf-8", timeout: 3000 }
+      );
+      return (
+        !probe.error &&
+        probe.status === 0 &&
+        typeof probe.stdout === "string" &&
+        probe.stdout.includes("tray_app.py")
+      );
+    }
+
+    const probe = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
+      encoding: "utf-8",
+      timeout: 3000,
+    });
+    return (
+      !probe.error &&
+      probe.status === 0 &&
+      typeof probe.stdout === "string" &&
+      probe.stdout.includes("tray_app.py")
+    );
   } catch {
     return false;
   }
@@ -42,11 +105,44 @@ function getRunningTrayPid(): number | null {
     return null;
   }
   try {
-    const pid = parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
-    return isPidRunning(pid) ? pid : null;
+    const raw = fs.readFileSync(pidFile, "utf-8").trim();
+    if (!raw) {
+      return null;
+    }
+    let pid: number;
+    if (raw.startsWith("{")) {
+      const parsed = JSON.parse(raw);
+      pid = typeof parsed?.pid === "number" ? parsed.pid : NaN;
+    } else {
+      pid = parseInt(raw, 10);
+    }
+    return isTrayProcess(pid) ? pid : null;
   } catch {
     return null;
   }
+}
+
+async function stopTrayProcess(pid: number, timeoutMs = 5000): Promise<boolean> {
+  if (!isTrayProcess(pid)) {
+    return true;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err: any) {
+    if (err && err.code === "ESRCH") {
+      return true;
+    }
+    throw err;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidRunning(pid)) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !isPidRunning(pid);
 }
 
 function saveUserConfig(config: UserConfig): void {
@@ -83,12 +179,15 @@ async function ensureTrayDependencies(pythonPath: string): Promise<void> {
     __dirname,
     "../scripts/requirements-tray.txt"
   );
+  const packageArgs = fs.existsSync(requirementsPath)
+    ? ["-r", requirementsPath]
+    : ["pystray>=0.19.5", "Pillow>=10.0.0"];
 
   const runPip = (extraArgs: string[]): Promise<boolean> =>
     new Promise((resolve) => {
       const pip = spawn(
         pythonPath,
-        ["-m", "pip", "install", "-q", ...extraArgs, "-r", requirementsPath],
+        ["-m", "pip", "install", "-q", ...extraArgs, ...packageArgs],
         { stdio: "inherit" }
       );
       pip.on("close", (code) => resolve(code === 0));
@@ -112,13 +211,13 @@ function printHelp(): void {
   console.log(`Usage: local-voice-mcp-tray [options]
 
 Options:
-  -d, --background     Launch the system tray / menu bar icon in the background
-  --stop               Stop a running background tray icon process
-  --status             Show current Quiet Mode, volume config, and tray PID status
-  --quiet <on|off>     Enable or disable Quiet Mode from the command line
+  -d, --background          Launch the system tray / menu bar icon in the background
+  --stop                    Stop a running background tray icon process
+  --status                  Show current Quiet Mode, volume config, and tray PID status
+  --quiet <on|off>          Enable or disable Quiet Mode from the command line
   --volume <0-100|default>  Set playback volume override (or 'default' to clear)
-  --force              Replace existing tray instance if PID lock is held
-  -h, --help           Show this help message
+  --force                   Terminate existing tray instance and start a replacement
+  -h, --help                Show this help message
 `);
 }
 
@@ -161,7 +260,7 @@ async function main(): Promise<void> {
       console.error("Error: --quiet requires 'on' or 'off'");
       process.exit(1);
     }
-    const config = loadUserConfig();
+    const config = loadUserConfigStrict();
     config.quietMode = val === "on";
     config.quietUntil = null;
     saveUserConfig(config);
@@ -171,15 +270,20 @@ async function main(): Promise<void> {
 
   const volIdx = args.indexOf("--volume");
   if (volIdx !== -1) {
-    const raw = (args[volIdx + 1] || "").toLowerCase();
-    const config = loadUserConfig();
+    const rawArg = args[volIdx + 1];
+    if (rawArg === undefined || rawArg.trim() === "") {
+      console.error("Error: --volume requires an integer 0-100 or 'default'");
+      process.exit(1);
+    }
+    const raw = rawArg.trim().toLowerCase();
+    const config = loadUserConfigStrict();
     if (raw === "default" || raw === "reset") {
       config.volume = null;
       saveUserConfig(config);
       console.log("Playback volume reset to default.");
       return;
     }
-    const parsed = Number(raw);
+    const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
       console.error("Error: --volume must be an integer 0-100 or 'default'");
       process.exit(1);
@@ -197,8 +301,15 @@ async function main(): Promise<void> {
       return;
     }
     try {
-      process.kill(pid, "SIGTERM");
-      console.log(`Stopped Local Voice MCP tray (PID ${pid}).`);
+      const stopped = await stopTrayProcess(pid);
+      if (stopped) {
+        console.log(`Stopped Local Voice MCP tray (PID ${pid}).`);
+      } else {
+        console.error(
+          `Timed out waiting for Local Voice MCP tray (PID ${pid}) to stop.`
+        );
+        process.exit(1);
+      }
     } catch (err) {
       console.error(
         `Failed to stop PID ${pid}: ${
@@ -212,11 +323,19 @@ async function main(): Promise<void> {
 
   const force = args.includes("--force");
   const existingPid = getRunningTrayPid();
-  if (existingPid && !force) {
-    console.log(
-      `Local Voice MCP tray is already running (PID ${existingPid}).`
-    );
-    return;
+  if (existingPid) {
+    if (!force) {
+      console.log(
+        `Local Voice MCP tray is already running (PID ${existingPid}).`
+      );
+      return;
+    }
+    const stopped = await stopTrayProcess(existingPid);
+    if (!stopped) {
+      throw new Error(
+        `Timed out waiting for existing tray instance (PID ${existingPid}) to exit.`
+      );
+    }
   }
 
   const pythonPath = resolvePythonPath();

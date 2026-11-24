@@ -16,15 +16,131 @@ export interface QuietModeStatus {
   quietUntil?: string;
 }
 
+const ISO_WITHOUT_TZ_REGEX =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+/**
+ * Expand a leading home-directory shorthand (~) to match Python's os.path.expanduser.
+ */
+function expandHomeDir(inputPath: string): string {
+  if (
+    inputPath === "~" ||
+    inputPath.startsWith("~/") ||
+    inputPath.startsWith("~\\")
+  ) {
+    return path.join(os.homedir(), inputPath.slice(1));
+  }
+  return inputPath;
+}
+
 /**
  * Resolve the path to the shared user configuration file.
  * Defaults to ~/.local-voice-mcp/config.json across macOS, Windows, and Linux.
  */
 export function getUserConfigPath(): string {
-  if (process.env.LOCAL_VOICE_MCP_CONFIG) {
-    return path.resolve(process.env.LOCAL_VOICE_MCP_CONFIG);
+  const override = process.env.LOCAL_VOICE_MCP_CONFIG;
+  if (override) {
+    return path.resolve(expandHomeDir(override));
   }
   return path.join(os.homedir(), ".local-voice-mcp", "config.json");
+}
+
+/**
+ * Validate and normalize parsed config fields so callers never observe
+ * invalid values (e.g. out-of-range volume or wrong types).
+ */
+export function normalizeUserConfig(raw: Record<string, unknown>): UserConfig {
+  const normalized: UserConfig = {};
+
+  if (typeof raw.quietMode === "boolean") {
+    normalized.quietMode = raw.quietMode;
+  }
+
+  if (raw.quietUntil === null) {
+    normalized.quietUntil = null;
+  } else if (typeof raw.quietUntil === "string") {
+    const trimmed = raw.quietUntil.trim();
+    if (trimmed.length > 0 && !Number.isNaN(parseIsoTimestampUtc(trimmed))) {
+      normalized.quietUntil = trimmed;
+    }
+  }
+
+  if (raw.volume === null) {
+    normalized.volume = null;
+  } else if (
+    typeof raw.volume === "number" &&
+    Number.isInteger(raw.volume) &&
+    raw.volume >= 0 &&
+    raw.volume <= 100
+  ) {
+    normalized.volume = raw.volume;
+  }
+
+  if (raw.useMaleVoice === null || typeof raw.useMaleVoice === "boolean") {
+    normalized.useMaleVoice = raw.useMaleVoice;
+  }
+
+  return normalized;
+}
+
+/**
+ * Parse an ISO-8601 timestamp consistently with scripts/tray_app.py:
+ * timezone-less date-time strings are normalized to UTC rather than local time.
+ */
+export function parseIsoTimestampUtc(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return Number.NaN;
+  }
+  const normalized = ISO_WITHOUT_TZ_REGEX.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  return Date.parse(normalized);
+}
+
+/**
+ * Read and parse the user configuration file strictly.
+ * Returns {} if the file does not exist (ENOENT), but throws on read/JSON/type
+ * errors so write paths never silently overwrite a corrupt config file.
+ */
+export function loadUserConfigStrict(): UserConfig {
+  const configPath = getUserConfigPath();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf-8");
+  } catch (error: any) {
+    if (error && error.code === "ENOENT") {
+      return {};
+    }
+    throw new Error(
+      `Cannot read user config at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Invalid JSON in user config at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `Invalid user config at ${configPath}: expected a JSON object`
+    );
+  }
+
+  return normalizeUserConfig(parsed as Record<string, unknown>);
 }
 
 /**
@@ -32,25 +148,11 @@ export function getUserConfigPath(): string {
  * Returns an empty object if the file does not exist or cannot be parsed.
  */
 export function loadUserConfig(): UserConfig {
-  const configPath = getUserConfigPath();
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    if (typeof raw !== "string" || raw.trim().length === 0) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as UserConfig;
-    }
-    return {};
-  } catch (error: any) {
-    if (error && error.code === "ENOENT") {
-      return {};
-    }
+    return loadUserConfigStrict();
+  } catch (error) {
     logger.warn(
-      `Failed to read user config at ${configPath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+      error instanceof Error ? error.message : String(error)
     );
     return {};
   }
@@ -71,7 +173,7 @@ export function getQuietModeStatus(
   }
 
   if (typeof config.quietUntil === "string" && config.quietUntil.trim().length > 0) {
-    const untilMs = Date.parse(config.quietUntil);
+    const untilMs = parseIsoTimestampUtc(config.quietUntil);
     if (!Number.isNaN(untilMs) && untilMs > nowMs) {
       return {
         active: true,

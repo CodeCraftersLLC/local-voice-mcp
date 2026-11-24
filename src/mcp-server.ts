@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import { createMCPServer } from "./mcp/mcp-server";
 import { startApp } from "./server";
@@ -38,13 +39,40 @@ function maybeStartTrayHelper(): void {
     return;
   }
   try {
-    const trayCliPath = path.join(__dirname, "tray-cli.js");
-    const child = spawn(process.execPath, [trayCliPath, "--background"], {
+    const compiledLocal = path.join(__dirname, "tray-cli.js");
+    const compiledDist = path.resolve(__dirname, "../dist/tray-cli.js");
+    const sourceTs = path.join(__dirname, "tray-cli.ts");
+
+    let spawnArgs: string[];
+    if (fs.existsSync(compiledLocal)) {
+      spawnArgs = [compiledLocal, "--background"];
+    } else if (fs.existsSync(compiledDist)) {
+      spawnArgs = [compiledDist, "--background"];
+    } else if (fs.existsSync(sourceTs)) {
+      spawnArgs = ["-r", "ts-node/register", sourceTs, "--background"];
+    } else {
+      logger.warn(
+        "Tray helper entrypoint not found; run 'npm run build' or start local-voice-mcp-tray manually."
+      );
+      return;
+    }
+
+    const child = spawn(process.execPath, spawnArgs, {
       detached: true,
       stdio: "ignore",
     });
+    child.on("error", (error) => {
+      logger.warn(`Failed to launch tray helper: ${error.message}`);
+    });
+    child.on("exit", (code) => {
+      if (code !== null && code !== 0) {
+        logger.warn(
+          `Tray helper exited with code ${code}; run local-voice-mcp-tray --background in a terminal to see the error.`
+        );
+      }
+    });
     child.unref();
-    logger.info("Spawned background tray helper (ENABLE_TRAY=true)");
+    logger.info("Launched background tray helper (ENABLE_TRAY=true)");
   } catch (error) {
     logger.warn(
       `Failed to auto-start tray helper: ${

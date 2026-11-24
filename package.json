@@ -4,6 +4,7 @@
   "main": "dist/server.js",
   "mcpName": "io.github.CodeCraftersLLC/local-voice-mcp",
   "bin": {
+    "local-voice-mcp": "./dist/mcp-server.js",
     "local-voice-mcp-server": "./dist/mcp-server.js",
     "local-voice-mcp-tray": "./dist/tray-cli.js"
   },

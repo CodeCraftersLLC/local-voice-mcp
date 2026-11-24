@@ -131,4 +131,4 @@ npm install -g @codecraftersllc/local-voice-mcp
 - **Check readiness and Quiet Mode:** Call `tts_status` to verify the active engine and see whether `playback.quietMode` is active.
 - **No sound played:** Check whether `play_audio` returned `"skipped": true` (Quiet Mode, active `quietUntil` snooze, or macOS system mute).
 - **Audio player missing:** `play_audio` prefers `ffplay` (from `ffmpeg`) for consistent cross-platform volume control, falling back to `afplay` (macOS), PowerShell `MediaPlayer` (Windows), or `mpg123`/`aplay` (Linux).
-- **Text limit exceeded:** Chatterbox defaults to `CHATTERBOX_MAX_CHARACTERS=2000` (Kokoro `5000`). Split long passages into shorter chunks before synthesizing.
+- **Text limit exceeded:** `synthesize_text` enforces `CHATTERBOX_MAX_CHARACTERS` (default `2000`) for Chatterbox and `KOKORO_MAX_CHARACTERS` (default `5000`) for Kokoro. Split long passages into shorter chunks before synthesizing.

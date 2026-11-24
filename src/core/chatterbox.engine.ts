@@ -256,7 +256,8 @@ export class ChatterboxEngine implements ITTSEngine {
     }
 
     // If no valid reference audio is specified, try to use the bundled reference audio
-    // unless USE_MALE_VOICE is set to true
+    // unless male voice is enabled via ~/.local-voice-mcp/config.json (useMaleVoice, takes precedence)
+    // or the USE_MALE_VOICE environment variable.
     if (!validatedReferenceAudio) {
       const userConfig = loadUserConfig();
       const useMaleVoice =

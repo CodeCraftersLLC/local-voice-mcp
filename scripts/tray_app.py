@@ -9,10 +9,12 @@ import atexit
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 # Hide macOS Dock icon before initializing GUI event loop so this acts as a pure menu bar app
 if sys.platform == "darwin":
@@ -37,6 +39,7 @@ else:
     CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 PID_FILE = os.path.join(CONFIG_DIR, "tray.pid")
+LOCK_FILE = os.path.join(CONFIG_DIR, "tray.lock")
 
 DEFAULT_CONFIG = {
     "quietMode": False,
@@ -45,14 +48,38 @@ DEFAULT_CONFIG = {
     "useMaleVoice": None,
 }
 
+# Keep lock file handle open for the process lifetime so the OS releases it automatically on exit
+_lock_file_handle = None
+
 
 def ensure_config_dir():
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
 
 def is_pid_running(pid: int) -> bool:
+    """Cross-platform process liveness check without terminating Windows processes."""
     if pid <= 0:
         return False
+
+    if sys.platform == "win32":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return kernel32.GetLastError() == ERROR_ACCESS_DENIED
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+
     try:
         os.kill(pid, 0)
         return True
@@ -64,38 +91,205 @@ def is_pid_running(pid: int) -> bool:
         return False
 
 
-def acquire_single_instance_lock(force: bool = False) -> bool:
-    ensure_config_dir()
-    if not force and os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, "r", encoding="utf-8") as f:
-                existing_pid = int(f.read().strip())
-            if existing_pid != os.getpid() and is_pid_running(existing_pid):
-                print(
-                    f"Local Voice MCP tray is already running (PID {existing_pid}).",
-                    file=sys.stderr,
-                )
-                return False
-        except Exception:
-            pass
+def is_tray_process(pid: int) -> bool:
+    """Verify that a live PID belongs to tray_app.py before sending termination signals."""
+    if not is_pid_running(pid):
+        return False
 
     try:
-        with open(PID_FILE, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+        if sys.platform == "win32":
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            return result.returncode == 0 and "tray_app.py" in (result.stdout or "")
+
+        result = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "args="],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        return result.returncode == 0 and "tray_app.py" in (result.stdout or "")
     except Exception:
+        return False
+
+
+def read_recorded_pid() -> int | None:
+    if not os.path.exists(PID_FILE):
+        return None
+    try:
+        with open(PID_FILE, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if not raw:
+            return None
+        if raw.startswith("{"):
+            data = json.loads(raw)
+            pid = data.get("pid")
+            return int(pid) if isinstance(pid, int) and pid > 0 else None
+        pid = int(raw)
+        return pid if pid > 0 else None
+    except Exception:
+        return None
+
+
+def write_pid_file(pid: int) -> None:
+    ensure_config_dir()
+    fd, tmp_path = tempfile.mkstemp(prefix=".tray-pid-", suffix=".json", dir=CONFIG_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            json.dump(
+                {
+                    "pid": pid,
+                    "script": "tray_app.py",
+                    "startedAt": datetime.now(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+                tmp_file,
+            )
+            tmp_file.write("\n")
+        os.replace(tmp_path, PID_FILE)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+def terminate_process(pid: int) -> bool:
+    """Terminate an existing tray_app.py process safely across platforms."""
+    if not is_tray_process(pid):
+        return False
+
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            PROCESS_TERMINATE = 0x0001
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, int(pid))
+            if not handle:
+                return False
+            try:
+                return bool(kernel32.TerminateProcess(handle, 0))
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            os.kill(pid, signal.SIGTERM)
+            return True
+    except OSError:
+        return False
+
+
+def _try_acquire_os_lock():
+    """Atomically acquire a non-blocking exclusive OS file lock on LOCK_FILE."""
+    ensure_config_dir()
+    handle = open(LOCK_FILE, "a+", encoding="utf-8")
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            if handle.read(1) == "":
+                handle.write("0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except OSError:
+        handle.close()
+        return None
+
+
+def _release_os_lock(handle) -> None:
+    if handle is None:
+        return
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        handle.close()
+    except OSError:
         pass
 
-    def cleanup_pid():
+
+def acquire_single_instance_lock(force: bool = False) -> bool:
+    """
+    Atomically acquire the single-instance lock.
+    When force=True and another tray instance holds the lock, terminate it and
+    wait for its lock to clear before proceeding.
+    """
+    global _lock_file_handle
+    ensure_config_dir()
+
+    handle = _try_acquire_os_lock()
+    if handle is None:
+        existing_pid = read_recorded_pid()
+        if not force:
+            pid_msg = f" (PID {existing_pid})" if existing_pid else ""
+            print(
+                f"Local Voice MCP tray is already running{pid_msg}.",
+                file=sys.stderr,
+            )
+            return False
+
+        if existing_pid and existing_pid != os.getpid():
+            terminate_process(existing_pid)
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            handle = _try_acquire_os_lock()
+            if handle is not None:
+                break
+
+        if handle is None:
+            print(
+                "Timed out waiting for existing Local Voice MCP tray instance to exit.",
+                file=sys.stderr,
+            )
+            return False
+
+    _lock_file_handle = handle
+    write_pid_file(os.getpid())
+
+    def cleanup():
+        global _lock_file_handle
         try:
-            if os.path.exists(PID_FILE):
-                with open(PID_FILE, "r", encoding="utf-8") as f:
-                    recorded = int(f.read().strip())
-                if recorded == os.getpid():
-                    os.remove(PID_FILE)
+            recorded = read_recorded_pid()
+            if recorded == os.getpid() and os.path.exists(PID_FILE):
+                os.remove(PID_FILE)
         except Exception:
             pass
+        _release_os_lock(_lock_file_handle)
+        _lock_file_handle = None
 
-    atexit.register(cleanup_pid)
+    atexit.register(cleanup)
     return True
 
 
@@ -399,7 +593,7 @@ def build_tray_app():
         watcher = threading.Thread(target=watch_loop, daemon=True)
         watcher.start()
 
-    return tray_icon, setup
+    return tray_icon, setup, stop_event
 
 
 def main():
@@ -408,7 +602,17 @@ def main():
         sys.exit(0)
 
     load_config()
-    tray_icon, setup = build_tray_app()
+    tray_icon, setup, stop_event = build_tray_app()
+
+    def _handle_sigterm(_signum, _frame):
+        stop_event.set()
+        tray_icon.stop()
+
+    try:
+        signal.signal(signal.SIGTERM, _handle_sigterm)
+    except Exception:
+        pass
+
     tray_icon.run(setup=setup)
 
 

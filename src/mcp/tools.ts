@@ -94,14 +94,21 @@ export class TTSTools {
       );
     }
 
+    const isKokoro = this.ttsService.getEngineType() === "kokoro";
+    const maxCharsEnvName = isKokoro
+      ? "KOKORO_MAX_CHARACTERS"
+      : "CHATTERBOX_MAX_CHARACTERS";
+    const defaultMaxChars = isKokoro ? 5000 : 2000;
     let maxCharacters = parseInt(
-      process.env.CHATTERBOX_MAX_CHARACTERS || "2000",
+      process.env[maxCharsEnvName] || String(defaultMaxChars),
       10
     );
     if (isNaN(maxCharacters) || maxCharacters <= 0) {
       // Added robustness for maxCharacters
-      logger.warn(`Invalid CHATTERBOX_MAX_CHARACTERS, defaulting to 2000.`);
-      maxCharacters = 2000;
+      logger.warn(
+        `Invalid ${maxCharsEnvName}, defaulting to ${defaultMaxChars}.`
+      );
+      maxCharacters = defaultMaxChars;
     }
     if (text && text.length > maxCharacters) {
       return createErrorResponse(
@@ -327,6 +334,23 @@ export class TTSTools {
           "output muted of (get volume settings)",
         ]);
         let output = "";
+        let settled = false;
+        const finish = (value: boolean | null) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        };
+
+        const timer = setTimeout(() => {
+          logger.warn("macOS mute check timed out, assuming not muted");
+          if (typeof osascript.kill === "function") {
+            osascript.kill();
+          }
+          finish(null);
+        }, 2000);
 
         if (osascript.stdout) {
           osascript.stdout.on("data", (data: Buffer) => {
@@ -337,12 +361,12 @@ export class TTSTools {
         osascript.on("close", (code: number) => {
           if (code === 0) {
             const trimmed = output.trim().toLowerCase();
-            resolve(trimmed === "true");
+            finish(trimmed === "true");
           } else {
             logger.warn(
               "Failed to check macOS mute state, assuming not muted"
             );
-            resolve(null);
+            finish(null);
           }
         });
 
@@ -350,7 +374,7 @@ export class TTSTools {
           logger.warn(
             `Error checking macOS mute state: ${err.message}, assuming not muted`
           );
-          resolve(null);
+          finish(null);
         });
       });
     } catch (error) {
@@ -906,7 +930,7 @@ const playAudioTool: Tool = {
       volume: {
         type: "number",
         description:
-          "Playback volume as a percentage (0-100). If not specified, uses CHATTERBOX_PLAYBACK_VOLUME environment variable or default of 50.",
+          "Playback volume as a percentage (0-100). If not specified, uses volume from ~/.local-voice-mcp/config.json, then CHATTERBOX_PLAYBACK_VOLUME environment variable, or default of 50.",
         minimum: 0,
         maximum: 100,
       },
