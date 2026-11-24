@@ -176,6 +176,40 @@ Or set the port:
 PORT=3000 MCP_MODE=http local-voice-mcp-server
 ```
 
+### System Tray / Menu Bar & Quiet Mode
+
+Control playback from your macOS menu bar, Windows system tray, or Ubuntu indicator bar (automatically installs `pystray` and `Pillow` on first run):
+
+```bash
+# Launch the menu bar / system tray icon in the background
+local-voice-mcp-tray --background
+
+# Or manage Quiet Mode & volume directly from CLI
+local-voice-mcp-tray --status
+local-voice-mcp-tray --quiet on
+local-voice-mcp-tray --quiet off
+local-voice-mcp-tray --volume 75
+local-voice-mcp-tray --stop
+```
+
+From the tray menu you can:
+- Toggle **Quiet Mode** to skip audio playback while still completing tool calls cleanly
+- **Temporarily Disable** playback for 15m, 30m, 1h, or 2h
+- Adjust **Playback Volume** (25%, 50%, 75%, 100%, or default) and **Chatterbox Voice**
+- Open `~/.local-voice-mcp/config.json` directly
+
+You can also set `"ENABLE_TRAY": "true"` in your MCP server `env` config to automatically launch the tray icon when the MCP server starts.
+
+### Agent Skill
+
+This repository includes an Agent Skill at [`skills/local-voice-mcp/SKILL.md`](skills/local-voice-mcp/SKILL.md) so AI coding agents (Antigravity, Claude Code, Codex, Cursor, etc.) know how to synthesize speech, respect Quiet Mode and user volume settings, and troubleshoot playback.
+
+Install it into your agent environment:
+
+```bash
+npx skills add CodeCraftersLLC/local-voice-mcp
+```
+
 ### Development
 
 ```bash

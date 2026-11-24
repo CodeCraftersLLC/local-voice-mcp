@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { logger } from "../utils/logger";
+import { loadUserConfig } from "../utils/user-config";
 import { ITTSEngine, TTSOptions, TTSEngineStatus } from "./tts-engine.interface";
 
 export class ChatterboxEngine implements ITTSEngine {
@@ -257,7 +258,11 @@ export class ChatterboxEngine implements ITTSEngine {
     // If no valid reference audio is specified, try to use the bundled reference audio
     // unless USE_MALE_VOICE is set to true
     if (!validatedReferenceAudio) {
-      const useMaleVoice = process.env.USE_MALE_VOICE === "true";
+      const userConfig = loadUserConfig();
+      const useMaleVoice =
+        typeof userConfig.useMaleVoice === "boolean"
+          ? userConfig.useMaleVoice
+          : process.env.USE_MALE_VOICE === "true";
 
       if (useMaleVoice) {
         logger.log(

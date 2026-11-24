@@ -4,6 +4,11 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { logger } from "../utils/logger";
+import {
+  getQuietModeStatus,
+  getUserConfigPath,
+  loadUserConfig,
+} from "../utils/user-config";
 
 const TEMP_AUDIO_DIR = path.join(os.tmpdir(), "local-voice-mcp");
 
@@ -187,6 +192,8 @@ export class TTSTools {
     try {
       await this.ttsService.ensureReady();
       const status = await this.ttsService.getStatus();
+      const userConfig = loadUserConfig();
+      const quietStatus = getQuietModeStatus(userConfig);
       
       return {
         content: [
@@ -204,6 +211,13 @@ export class TTSTools {
                   version: status.version,
                   capabilities: status.capabilities,
                   ready: status.ready,
+                },
+                playback: {
+                  quietMode: quietStatus.active,
+                  ...(quietStatus.reason && { quietReason: quietStatus.reason }),
+                  ...(quietStatus.quietUntil && { quietUntil: quietStatus.quietUntil }),
+                  configuredVolume: userConfig.volume ?? null,
+                  configFile: getUserConfigPath(),
                 },
               },
               null,
@@ -297,6 +311,59 @@ export class TTSTools {
   }
 
   /**
+   * Check if macOS system is muted
+   * @returns true if muted, false if not muted, null if check failed
+   */
+  private async checkMacOSMuteState(): Promise<boolean | null> {
+    if (process.platform !== "darwin") {
+      return null; // Not macOS, mute check not applicable
+    }
+
+    try {
+      const { spawn } = require("child_process");
+      return new Promise((resolve) => {
+        const osascript = spawn("osascript", [
+          "-e",
+          "output muted of (get volume settings)",
+        ]);
+        let output = "";
+
+        if (osascript.stdout) {
+          osascript.stdout.on("data", (data: Buffer) => {
+            output += data.toString();
+          });
+        }
+
+        osascript.on("close", (code: number) => {
+          if (code === 0) {
+            const trimmed = output.trim().toLowerCase();
+            resolve(trimmed === "true");
+          } else {
+            logger.warn(
+              "Failed to check macOS mute state, assuming not muted"
+            );
+            resolve(null);
+          }
+        });
+
+        osascript.on("error", (err: Error) => {
+          logger.warn(
+            `Error checking macOS mute state: ${err.message}, assuming not muted`
+          );
+          resolve(null);
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Exception checking macOS mute state: ${
+          error instanceof Error ? error.message : String(error)
+        }, assuming not muted`
+      );
+      return null;
+    }
+  }
+
+  /**
    * Play an audio file using the system's default audio player
    */
   async playAudio(params: {
@@ -323,7 +390,10 @@ export class TTSTools {
       );
     }
 
+    const userConfig = loadUserConfig();
+
     // Validate and resolve volume parameter
+    // Priority: explicit tool arg > user config (~/.local-voice-mcp/config.json) > env var > default (50)
     let volume: number;
     if (rawVolume !== undefined) {
       // Validate volume parameter
@@ -339,6 +409,13 @@ export class TTSTools {
         );
       }
       volume = rawVolume;
+    } else if (
+      typeof userConfig.volume === "number" &&
+      Number.isInteger(userConfig.volume) &&
+      userConfig.volume >= 0 &&
+      userConfig.volume <= 100
+    ) {
+      volume = userConfig.volume;
     } else {
       // Use environment variable or default
       const envVolume = process.env.CHATTERBOX_PLAYBACK_VOLUME;
@@ -417,6 +494,55 @@ export class TTSTools {
         "Unsupported Format",
         `Unsupported audio format: "${ext}". Supported: .wav, .mp3. File: "${rawAudioFile}"`
       );
+    }
+
+    // 5. Check manual Quiet Mode / temporary snooze and macOS mute state before playback
+    const quietStatus = getQuietModeStatus(userConfig);
+    const isMuted = quietStatus.active
+      ? false
+      : await this.checkMacOSMuteState();
+
+    if (quietStatus.active || isMuted === true) {
+      const skipReason = quietStatus.active
+        ? quietStatus.reason || "Quiet Mode is enabled"
+        : "macOS system is muted";
+      logger.info(
+        `Skipping audio playback: ${skipReason}. File: ${rawAudioFile}`
+      );
+      const deletionResult = this.deleteAudioFileIfRequested(
+        resolvedPathToPlay,
+        deleteAfterPlay,
+        rawAudioFile
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                success: true,
+                skipped: true,
+                message: `Audio playback skipped: ${skipReason}`,
+                audioFile: rawAudioFile,
+                volume: volume,
+                platform: process.platform,
+                muted: isMuted === true,
+                quietMode: quietStatus.active,
+                ...(quietStatus.quietUntil && {
+                  quietUntil: quietStatus.quietUntil,
+                }),
+                timestamp: new Date().toISOString(),
+                fileDeleted: deletionResult.deleted,
+                ...(deletionResult.deleteMessage && {
+                  deleteMessage: deletionResult.deleteMessage,
+                }),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
     }
 
     try {
@@ -768,7 +894,7 @@ const synthesizeTextTool: Tool = {
 const playAudioTool: Tool = {
   name: "play_audio",
   description:
-    "Play an audio file using the system's default audio player with optional volume control and file cleanup. Supports WAV and MP3 formats. Files must be in the temporary directory for security.",
+    "Play an audio file using the system's default audio player with optional volume control and file cleanup. Supports WAV and MP3 formats. Files must be in the temporary directory for security. Playback is automatically skipped if Quiet Mode is enabled (via tray app / ~/.local-voice-mcp/config.json) or if macOS system audio is muted.",
   inputSchema: {
     type: "object",
     properties: {

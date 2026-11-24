@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { spawn } from "child_process";
+import * as path from "path";
 import { createMCPServer } from "./mcp/mcp-server";
 import { startApp } from "./server";
 import getPort from "get-port";
@@ -31,8 +33,30 @@ async function getPortNumber(): Promise<number> {
   return await getPort({ port: 59125 });
 }
 
+function maybeStartTrayHelper(): void {
+  if (process.env.ENABLE_TRAY?.toLowerCase() !== "true") {
+    return;
+  }
+  try {
+    const trayCliPath = path.join(__dirname, "tray-cli.js");
+    const child = spawn(process.execPath, [trayCliPath, "--background"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    logger.info("Spawned background tray helper (ENABLE_TRAY=true)");
+  } catch (error) {
+    logger.warn(
+      `Failed to auto-start tray helper: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
 async function main() {
   logger.info(`Starting Local Voice MCP Server in ${MODE} mode...`);
+  maybeStartTrayHelper();
 
   try {
     if (MODE === "http") {

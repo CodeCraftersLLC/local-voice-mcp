@@ -4,7 +4,8 @@
   "main": "dist/server.js",
   "mcpName": "io.github.CodeCraftersLLC/local-voice-mcp",
   "bin": {
-    "local-voice-mcp-server": "./dist/mcp-server.js"
+    "local-voice-mcp-server": "./dist/mcp-server.js",
+    "local-voice-mcp-tray": "./dist/tray-cli.js"
   },
   "author": "soyboyscout",
   "repository": {
@@ -17,7 +18,8 @@
   "homepage": "https://github.com/CodeCraftersLLC/local-voice-mcp#readme",
   "scripts": {
     "test": "npx jest",
-    "build": "tsc",
+    "build": "tsc && node -e \"const fs=require('fs');['dist/mcp-server.js','dist/tray-cli.js'].forEach(f=>fs.existsSync(f)&&fs.chmodSync(f,0o755))\"",
+    "tray": "npm run build && node dist/tray-cli.js",
     "start": "ts-node src/server.ts",
     "start:mcp": "npm run build && node dist/mcp-server.js",
     "dev:mcp": "ts-node src/mcp-server.ts",
@@ -38,6 +40,7 @@
   "files": [
     "dist/",
     "scripts/",
+    "skills/",
     "female-reference-voice.wav"
   ],
   "publishConfig": {

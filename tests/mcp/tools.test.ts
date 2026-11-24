@@ -441,6 +441,113 @@ describe("TTSTools", () => {
       expect(errorResponse.message).toContain("Unsupported audio format");
     });
 
+    describe("Quiet Mode and user config", () => {
+      let tempConfigDir: string;
+      let tempConfigPath: string;
+      const originalConfigEnv = process.env.LOCAL_VOICE_MCP_CONFIG;
+
+      beforeEach(() => {
+        const realFs = jest.requireActual("fs") as typeof fs;
+        tempConfigDir = realFs.mkdtempSync(
+          path.join(require("os").tmpdir(), "lvmcp-tools-cfg-")
+        );
+        tempConfigPath = path.join(tempConfigDir, "config.json");
+        process.env.LOCAL_VOICE_MCP_CONFIG = tempConfigPath;
+      });
+
+      afterEach(() => {
+        const realFs = jest.requireActual("fs") as typeof fs;
+        if (originalConfigEnv !== undefined) {
+          process.env.LOCAL_VOICE_MCP_CONFIG = originalConfigEnv;
+        } else {
+          delete process.env.LOCAL_VOICE_MCP_CONFIG;
+        }
+        realFs.rmSync(tempConfigDir, { recursive: true, force: true });
+      });
+
+      it("should skip audio playback when Quiet Mode is enabled in user config", async () => {
+        const realFs = jest.requireActual("fs") as typeof fs;
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        mockFs.unlinkSync.mockReturnValue(undefined);
+        realFs.writeFileSync(
+          tempConfigPath,
+          JSON.stringify({ quietMode: true }),
+          "utf-8"
+        );
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: true,
+        });
+
+        expect(!("isError" in result) || !result.isError).toBe(true);
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.skipped).toBe(true);
+        expect(response.quietMode).toBe(true);
+        expect(response.message).toContain("Quiet Mode is enabled");
+        expect(response.fileDeleted).toBe(true);
+        expect(mockSpawn).not.toHaveBeenCalled();
+      });
+
+      it("should skip audio playback when temporary snooze (quietUntil) is active", async () => {
+        const realFs = jest.requireActual("fs") as typeof fs;
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        const futureIso = new Date(Date.now() + 30 * 60_000).toISOString();
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        realFs.writeFileSync(
+          tempConfigPath,
+          JSON.stringify({ quietMode: false, quietUntil: futureIso }),
+          "utf-8"
+        );
+
+        const result = await ttsTools.playAudio({
+          audioFile,
+          deleteAfterPlay: false,
+        });
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.skipped).toBe(true);
+        expect(response.quietMode).toBe(true);
+        expect(response.quietUntil).toBe(futureIso);
+        expect(mockSpawn).not.toHaveBeenCalled();
+      });
+
+      it("should use volume from user config when explicit volume parameter is omitted", async () => {
+        const realFs = jest.requireActual("fs") as typeof fs;
+        const audioFile = require("path").join(
+          require("os").tmpdir(),
+          "local-voice-mcp",
+          "test.wav"
+        );
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.statSync.mockReturnValue({ isFile: () => true } as any);
+        realFs.writeFileSync(
+          tempConfigPath,
+          JSON.stringify({ quietMode: false, volume: 80 }),
+          "utf-8"
+        );
+
+        const result = await ttsTools.playAudio({ audioFile });
+
+        const response = JSON.parse(result.content[0].text!);
+        expect(response.success).toBe(true);
+        expect(response.volume).toBe(80);
+      });
+    });
+
     describe("deleteAfterPlay functionality", () => {
       it("should delete file after successful playback when deleteAfterPlay is true", async () => {
         const audioFile = require("path").join(
