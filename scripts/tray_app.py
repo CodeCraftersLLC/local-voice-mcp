@@ -9,6 +9,8 @@ import atexit
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -40,6 +42,8 @@ else:
 
 PID_FILE = os.path.join(CONFIG_DIR, "tray.pid")
 LOCK_FILE = os.path.join(CONFIG_DIR, "tray.lock")
+SCRIPT_REALPATH = os.path.realpath(__file__)
+PYTHON_BIN_PATTERN = re.compile(r"^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$", re.IGNORECASE)
 
 DEFAULT_CONFIG = {
     "quietMode": False,
@@ -91,8 +95,41 @@ def is_pid_running(pid: int) -> bool:
         return False
 
 
-def is_tray_process(pid: int) -> bool:
-    """Verify that a live PID belongs to tray_app.py before sending termination signals."""
+def _normalize_path_for_compare(p: str) -> str:
+    try:
+        resolved = os.path.realpath(p)
+    except Exception:
+        resolved = os.path.abspath(p)
+    return os.path.normcase(resolved)
+
+
+def _command_line_matches_tray(cmdline: str, expected_script_path: str | None) -> bool:
+    """Verify argv[0] is a Python interpreter and an argument matches the tray script path."""
+    if not cmdline or not cmdline.strip():
+        return False
+    try:
+        tokens = shlex.split(cmdline, posix=(sys.platform != "win32"))
+    except ValueError:
+        tokens = cmdline.split()
+    if len(tokens) < 2:
+        return False
+
+    exe_name = os.path.basename(tokens[0].strip('"').strip("'"))
+    if not PYTHON_BIN_PATTERN.match(exe_name):
+        return False
+
+    expected_norm = _normalize_path_for_compare(expected_script_path or SCRIPT_REALPATH)
+    for token in tokens[1:]:
+        cleaned = token.strip('"').strip("'")
+        if not cleaned or cleaned.startswith("-"):
+            continue
+        if _normalize_path_for_compare(cleaned) == expected_norm:
+            return True
+    return False
+
+
+def is_tray_process(pid: int, expected_script_path: str | None = None) -> bool:
+    """Verify that a live PID is a Python interpreter executing this tray_app.py script."""
     if not is_pid_running(pid):
         return False
 
@@ -111,7 +148,9 @@ def is_tray_process(pid: int) -> bool:
                 timeout=10,
                 check=False,
             )
-            return result.returncode == 0 and "tray_app.py" in (result.stdout or "")
+            if result.returncode != 0:
+                return False
+            return _command_line_matches_tray(result.stdout or "", expected_script_path)
 
         result = subprocess.run(
             ["ps", "-p", str(int(pid)), "-o", "args="],
@@ -120,27 +159,30 @@ def is_tray_process(pid: int) -> bool:
             timeout=3,
             check=False,
         )
-        return result.returncode == 0 and "tray_app.py" in (result.stdout or "")
+        if result.returncode != 0:
+            return False
+        return _command_line_matches_tray(result.stdout or "", expected_script_path)
     except Exception:
         return False
 
 
-def read_recorded_pid() -> int | None:
+def read_recorded_pid_info() -> tuple[int | None, str | None]:
     if not os.path.exists(PID_FILE):
-        return None
+        return None, None
     try:
         with open(PID_FILE, "r", encoding="utf-8") as f:
             raw = f.read().strip()
         if not raw:
-            return None
+            return None, None
         if raw.startswith("{"):
             data = json.loads(raw)
             pid = data.get("pid")
-            return int(pid) if isinstance(pid, int) and pid > 0 else None
+            script_path = data.get("scriptPath") if isinstance(data.get("scriptPath"), str) else None
+            return (int(pid) if isinstance(pid, int) and pid > 0 else None), script_path
         pid = int(raw)
-        return pid if pid > 0 else None
+        return (pid if pid > 0 else None), None
     except Exception:
-        return None
+        return None, None
 
 
 def write_pid_file(pid: int) -> None:
@@ -152,6 +194,8 @@ def write_pid_file(pid: int) -> None:
                 {
                     "pid": pid,
                     "script": "tray_app.py",
+                    "scriptPath": SCRIPT_REALPATH,
+                    "executable": os.path.realpath(sys.executable),
                     "startedAt": datetime.now(timezone.utc)
                     .isoformat()
                     .replace("+00:00", "Z"),
@@ -168,9 +212,9 @@ def write_pid_file(pid: int) -> None:
                 pass
 
 
-def terminate_process(pid: int) -> bool:
+def terminate_process(pid: int, expected_script_path: str | None = None) -> bool:
     """Terminate an existing tray_app.py process safely across platforms."""
-    if not is_tray_process(pid):
+    if not is_tray_process(pid, expected_script_path):
         return False
 
     try:
@@ -238,28 +282,30 @@ def _release_os_lock(handle) -> None:
         pass
 
 
-def acquire_single_instance_lock(force: bool = False) -> bool:
+def acquire_single_instance_lock(force: bool = False) -> str:
     """
     Atomically acquire the single-instance lock.
-    When force=True and another tray instance holds the lock, terminate it and
-    wait for its lock to clear before proceeding.
+    Returns:
+      - "acquired": lock acquired by this process
+      - "already_running": another instance holds the lock and force=False
+      - "timeout": force=True failed to replace the existing instance before deadline
     """
     global _lock_file_handle
     ensure_config_dir()
 
     handle = _try_acquire_os_lock()
     if handle is None:
-        existing_pid = read_recorded_pid()
+        existing_pid, recorded_script = read_recorded_pid_info()
         if not force:
             pid_msg = f" (PID {existing_pid})" if existing_pid else ""
             print(
                 f"Local Voice MCP tray is already running{pid_msg}.",
                 file=sys.stderr,
             )
-            return False
+            return "already_running"
 
         if existing_pid and existing_pid != os.getpid():
-            terminate_process(existing_pid)
+            terminate_process(existing_pid, recorded_script)
 
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -273,7 +319,7 @@ def acquire_single_instance_lock(force: bool = False) -> bool:
                 "Timed out waiting for existing Local Voice MCP tray instance to exit.",
                 file=sys.stderr,
             )
-            return False
+            return "timeout"
 
     _lock_file_handle = handle
     write_pid_file(os.getpid())
@@ -281,8 +327,8 @@ def acquire_single_instance_lock(force: bool = False) -> bool:
     def cleanup():
         global _lock_file_handle
         try:
-            recorded = read_recorded_pid()
-            if recorded == os.getpid() and os.path.exists(PID_FILE):
+            recorded_pid, _ = read_recorded_pid_info()
+            if recorded_pid == os.getpid() and os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
         except Exception:
             pass
@@ -290,24 +336,40 @@ def acquire_single_instance_lock(force: bool = False) -> bool:
         _lock_file_handle = None
 
     atexit.register(cleanup)
-    return True
+    return "acquired"
+
+
+def load_config_strict() -> dict:
+    """
+    Read and parse CONFIG_FILE strictly for read-modify-write updates.
+    Creates/returns defaults if missing, but raises on read/JSON/type errors so
+    tray updates never silently overwrite a malformed user config file.
+    """
+    ensure_config_dir()
+    if not os.path.exists(CONFIG_FILE):
+        return dict(DEFAULT_CONFIG)
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        raw = f.read()
+    if not raw.strip():
+        return dict(DEFAULT_CONFIG)
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object in {CONFIG_FILE}")
+    merged = dict(DEFAULT_CONFIG)
+    merged.update(data)
+    return merged
 
 
 def load_config() -> dict:
+    """Forgiving config reader for status display and icon rendering."""
     ensure_config_dir()
     if not os.path.exists(CONFIG_FILE):
         save_config(dict(DEFAULT_CONFIG))
         return dict(DEFAULT_CONFIG)
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            merged = dict(DEFAULT_CONFIG)
-            merged.update(data)
-            return merged
+        return load_config_strict()
     except Exception:
-        pass
-    return dict(DEFAULT_CONFIG)
+        return dict(DEFAULT_CONFIG)
 
 
 def save_config(config: dict) -> None:
@@ -330,7 +392,7 @@ def parse_iso_utc(value) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
-        normalized = value.strip().replace("Z", "+00:00")
+        normalized = value.strip().replace("Z", "+00:00").replace("z", "+00:00")
         dt = datetime.fromisoformat(normalized)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
@@ -380,7 +442,17 @@ def create_speaker_icon(muted: bool) -> Image.Image:
     return img
 
 
-def build_tray_app():
+def write_ready_marker(ready_file: str | None) -> None:
+    if not ready_file:
+        return
+    try:
+        with open(ready_file, "w", encoding="utf-8") as f:
+            f.write(f"{os.getpid()}\n")
+    except OSError:
+        pass
+
+
+def build_tray_app(ready_file: str | None = None):
     stop_event = threading.Event()
 
     def refresh_icon(icon_obj):
@@ -394,38 +466,51 @@ def build_tray_app():
         )
         icon_obj.update_menu()
 
-    def toggle_quiet_mode(icon_obj, _item):
-        cfg = load_config()
-        currently_quiet = is_quiet_active(cfg)
-        cfg["quietMode"] = not currently_quiet
-        cfg["quietUntil"] = None
+    def update_config(icon_obj, mutator):
+        try:
+            cfg = load_config_strict()
+        except Exception as exc:
+            print(
+                f"Refusing to overwrite malformed/unreadable config at {CONFIG_FILE}: {exc}",
+                file=sys.stderr,
+            )
+            return
+        mutator(cfg)
         save_config(cfg)
         refresh_icon(icon_obj)
 
+    def toggle_quiet_mode(icon_obj, _item):
+        def _mutate(cfg):
+            currently_quiet = is_quiet_active(cfg)
+            cfg["quietMode"] = not currently_quiet
+            cfg["quietUntil"] = None
+
+        update_config(icon_obj, _mutate)
+
     def set_snooze_minutes(minutes: int):
         def _handler(icon_obj, _item):
-            cfg = load_config()
-            cfg["quietMode"] = False
-            until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-            cfg["quietUntil"] = until.isoformat().replace("+00:00", "Z")
-            save_config(cfg)
-            refresh_icon(icon_obj)
+            def _mutate(cfg):
+                cfg["quietMode"] = False
+                until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+                cfg["quietUntil"] = until.isoformat().replace("+00:00", "Z")
+
+            update_config(icon_obj, _mutate)
 
         return _handler
 
     def resume_audio_now(icon_obj, _item):
-        cfg = load_config()
-        cfg["quietMode"] = False
-        cfg["quietUntil"] = None
-        save_config(cfg)
-        refresh_icon(icon_obj)
+        def _mutate(cfg):
+            cfg["quietMode"] = False
+            cfg["quietUntil"] = None
+
+        update_config(icon_obj, _mutate)
 
     def set_volume_option(vol_value):
         def _handler(icon_obj, _item):
-            cfg = load_config()
-            cfg["volume"] = vol_value
-            save_config(cfg)
-            refresh_icon(icon_obj)
+            def _mutate(cfg):
+                cfg["volume"] = vol_value
+
+            update_config(icon_obj, _mutate)
 
         return _handler
 
@@ -437,10 +522,10 @@ def build_tray_app():
 
     def set_voice_option(male_value):
         def _handler(icon_obj, _item):
-            cfg = load_config()
-            cfg["useMaleVoice"] = male_value
-            save_config(cfg)
-            refresh_icon(icon_obj)
+            def _mutate(cfg):
+                cfg["useMaleVoice"] = male_value
+
+            update_config(icon_obj, _mutate)
 
         return _handler
 
@@ -461,7 +546,8 @@ def build_tray_app():
         return "Status: Audio Active"
 
     def open_config_file(_icon_obj, _item):
-        load_config()  # Ensure file exists
+        if not os.path.exists(CONFIG_FILE):
+            save_config(dict(DEFAULT_CONFIG))
         try:
             if sys.platform == "darwin":
                 subprocess.Popen(["open", CONFIG_FILE])
@@ -569,6 +655,11 @@ def build_tray_app():
     )
 
     def setup(icon_obj):
+        # Honor SIGTERM received before pystray finished initializing
+        if stop_event.is_set():
+            icon_obj.stop()
+            return
+
         if sys.platform == "darwin":
             try:
                 import AppKit
@@ -580,6 +671,7 @@ def build_tray_app():
                 pass
 
         icon_obj.visible = True
+        write_ready_marker(ready_file)
         last_state = is_quiet_active()
 
         def watch_loop():
@@ -596,22 +688,41 @@ def build_tray_app():
     return tray_icon, setup, stop_event
 
 
+def _parse_ready_file_arg(argv: list[str]) -> str | None:
+    for idx, arg in enumerate(argv):
+        if arg == "--ready-file" and idx + 1 < len(argv):
+            return argv[idx + 1]
+    return None
+
+
 def main():
     force = "--force" in sys.argv
-    if not acquire_single_instance_lock(force=force):
+    ready_file = _parse_ready_file_arg(sys.argv[1:])
+
+    lock_result = acquire_single_instance_lock(force=force)
+    if lock_result == "already_running":
         sys.exit(0)
+    if lock_result == "timeout":
+        sys.exit(1)
 
     load_config()
-    tray_icon, setup, stop_event = build_tray_app()
+    tray_icon, setup, stop_event = build_tray_app(ready_file=ready_file)
 
     def _handle_sigterm(_signum, _frame):
         stop_event.set()
-        tray_icon.stop()
+        try:
+            tray_icon.stop()
+        except Exception:
+            pass
 
     try:
         signal.signal(signal.SIGTERM, _handle_sigterm)
     except Exception:
         pass
+
+    # If SIGTERM arrived before run() started, skip entering the GUI event loop
+    if stop_event.is_set():
+        sys.exit(0)
 
     tray_icon.run(setup=setup)
 

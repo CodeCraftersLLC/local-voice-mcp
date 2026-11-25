@@ -16,9 +16,9 @@ export interface QuietModeStatus {
   quietUntil?: string;
 }
 
-const ISO_DATE_PREFIX_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/;
+const ISO_DATE_PREFIX_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/i;
 const ISO_WITHOUT_TZ_REGEX =
-  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/i;
 
 /**
  * Expand a leading home-directory shorthand (~) to match Python's os.path.expanduser.
@@ -111,7 +111,7 @@ export function parseIsoTimestampUtc(value: string): number {
   }
 
   const normalized = ISO_WITHOUT_TZ_REGEX.test(trimmed)
-    ? `${trimmed.replace(" ", "T")}Z`
+    ? `${trimmed.replace(/[ t]/i, "T")}Z`
     : trimmed;
   return Date.parse(normalized);
 }

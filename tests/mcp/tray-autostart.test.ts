@@ -130,7 +130,7 @@ describe("maybeStartTrayHelper", () => {
     );
   });
 
-  it("logs warnings on child error and non-zero exit", () => {
+  it("logs warnings on child error, non-zero exit, and signal termination", () => {
     process.env.ENABLE_TRAY = "true";
     const fakeChild = makeFakeChild();
     mockSpawn.mockReturnValue(fakeChild);
@@ -138,13 +138,17 @@ describe("maybeStartTrayHelper", () => {
 
     maybeStartTrayHelper();
     fakeChild.emit("error", new Error("ENOENT"));
-    fakeChild.emit("exit", 1);
+    fakeChild.emit("exit", 1, null);
+    fakeChild.emit("exit", null, "SIGTERM");
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Failed to launch tray helper: ENOENT")
     );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Tray helper exited with code 1")
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Tray helper terminated by signal SIGTERM")
     );
   });
 });

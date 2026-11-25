@@ -149,11 +149,21 @@ describe("user-config", () => {
 
   it("rejects impossible calendar dates such as February 30", () => {
     expect(parseIsoTimestampUtc("2026-02-30T12:00:00Z")).toBeNaN();
+    expect(parseIsoTimestampUtc("2027-02-30t12:00:00z")).toBeNaN();
     expect(parseIsoTimestampUtc("2026-04-31T00:00:00")).toBeNaN();
+    expect(parseIsoTimestampUtc("2027-02-28t12:00:00z")).toBe(
+      Date.parse("2027-02-28T12:00:00Z")
+    );
     expect(
       getQuietModeStatus(
         { quietMode: false, quietUntil: "2026-02-30T12:00:00Z" },
         Date.parse("2026-02-01T00:00:00Z")
+      )
+    ).toEqual({ active: false });
+    expect(
+      getQuietModeStatus(
+        { quietMode: false, quietUntil: "2027-02-30t12:00:00z" },
+        Date.parse("2027-02-01T00:00:00Z")
       )
     ).toEqual({ active: false });
     expect(

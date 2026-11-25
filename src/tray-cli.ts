@@ -11,6 +11,13 @@ import {
   loadUserConfig,
 } from "./utils/user-config";
 
+interface RecordedPidInfo {
+  pid: number;
+  scriptPath?: string;
+}
+
+const PYTHON_BIN_REGEX = /^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$/i;
+
 function resolvePythonPath(): string {
   const explicit =
     process.env.TRAY_PYTHON_PATH ||
@@ -42,6 +49,62 @@ function getPidFilePath(): string {
   return path.join(path.dirname(getUserConfigPath()), "tray.pid");
 }
 
+function getTrayScriptPath(): string {
+  const candidate = path.join(__dirname, "../scripts/tray_app.py");
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return path.resolve(candidate);
+  }
+}
+
+function normalizePathForCompare(p: string): string {
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync(p);
+  } catch {
+    resolved = path.resolve(p);
+  }
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function tokenizeCommandLine(cmdline: string): string[] {
+  const tokens: string[] = [];
+  const regex = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(cmdline)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return tokens;
+}
+
+function commandLineMatchesTray(
+  cmdline: string,
+  expectedScriptPath: string
+): boolean {
+  const tokens = tokenizeCommandLine(cmdline.trim());
+  if (tokens.length < 2) {
+    return false;
+  }
+
+  const exeBase = path.basename(tokens[0]);
+  if (!PYTHON_BIN_REGEX.test(exeBase)) {
+    return false;
+  }
+
+  const expectedNorm = normalizePathForCompare(expectedScriptPath);
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token || token.startsWith("-")) {
+      continue;
+    }
+    if (normalizePathForCompare(token) === expectedNorm) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isPidRunning(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -54,14 +117,22 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
+type ProcessIdentityCheck = "match" | "not_running" | "mismatch" | "unknown";
+
 /**
- * Verify that a live PID is actually running tray_app.py before signalling it,
- * preventing accidental signals to an unrelated process after PID reuse.
+ * Verify that a live PID is a Python interpreter running the expected tray_app.py
+ * script before signaling it, preventing signals to unrelated processes (e.g. an
+ * editor opened on tray_app.py) or after PID reuse.
  */
-function isTrayProcess(pid: number): boolean {
+function verifyTrayProcess(
+  pid: number,
+  expectedScriptPath?: string
+): ProcessIdentityCheck {
   if (!isPidRunning(pid)) {
-    return false;
+    return "not_running";
   }
+
+  const targetScript = expectedScriptPath || getTrayScriptPath();
 
   try {
     if (process.platform === "win32") {
@@ -75,30 +146,30 @@ function isTrayProcess(pid: number): boolean {
         ],
         { encoding: "utf-8", timeout: 10000 }
       );
-      return (
-        !probe.error &&
-        probe.status === 0 &&
-        typeof probe.stdout === "string" &&
-        probe.stdout.includes("tray_app.py")
-      );
+      if (probe.error || probe.status !== 0 || typeof probe.stdout !== "string") {
+        return "unknown";
+      }
+      return commandLineMatchesTray(probe.stdout, targetScript)
+        ? "match"
+        : "mismatch";
     }
 
     const probe = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
       encoding: "utf-8",
       timeout: 3000,
     });
-    return (
-      !probe.error &&
-      probe.status === 0 &&
-      typeof probe.stdout === "string" &&
-      probe.stdout.includes("tray_app.py")
-    );
+    if (probe.error || probe.status !== 0 || typeof probe.stdout !== "string") {
+      return "unknown";
+    }
+    return commandLineMatchesTray(probe.stdout, targetScript)
+      ? "match"
+      : "mismatch";
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
-function getRunningTrayPid(): number | null {
+function readRecordedPidInfo(): RecordedPidInfo | null {
   const pidFile = getPidFilePath();
   if (!fs.existsSync(pidFile)) {
     return null;
@@ -108,25 +179,53 @@ function getRunningTrayPid(): number | null {
     if (!raw) {
       return null;
     }
-    let pid: number;
     if (raw.startsWith("{")) {
       const parsed = JSON.parse(raw);
-      pid = typeof parsed?.pid === "number" ? parsed.pid : NaN;
-    } else {
-      pid = parseInt(raw, 10);
+      if (
+        typeof parsed?.pid === "number" &&
+        Number.isInteger(parsed.pid) &&
+        parsed.pid > 0
+      ) {
+        return {
+          pid: parsed.pid,
+          ...(typeof parsed.scriptPath === "string" && {
+            scriptPath: parsed.scriptPath,
+          }),
+        };
+      }
+      return null;
     }
-    return isTrayProcess(pid) ? pid : null;
+    const pid = parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? { pid } : null;
   } catch {
     return null;
   }
 }
 
-async function stopTrayProcess(pid: number, timeoutMs = 5000): Promise<boolean> {
-  if (!isTrayProcess(pid)) {
+function getRunningTrayInfo(): RecordedPidInfo | null {
+  const info = readRecordedPidInfo();
+  if (!info) {
+    return null;
+  }
+  return verifyTrayProcess(info.pid, info.scriptPath) === "match" ? info : null;
+}
+
+async function stopTrayProcess(
+  info: RecordedPidInfo,
+  timeoutMs = 5000
+): Promise<boolean> {
+  const identity = verifyTrayProcess(info.pid, info.scriptPath);
+  if (identity === "not_running") {
     return true;
   }
+  if (identity !== "match") {
+    throw new Error(
+      `Refusing to signal PID ${info.pid}: could not verify it is the Local Voice MCP tray process (status: ${identity}).`
+    );
+  }
+
   try {
-    process.kill(pid, "SIGTERM");
+    process.kill(info.pid, "SIGTERM");
   } catch (err: any) {
     if (err && err.code === "ESRCH") {
       return true;
@@ -136,12 +235,12 @@ async function stopTrayProcess(pid: number, timeoutMs = 5000): Promise<boolean> 
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!isPidRunning(pid)) {
+    if (!isPidRunning(info.pid)) {
       return true;
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  return !isPidRunning(pid);
+  return !isPidRunning(info.pid);
 }
 
 function saveUserConfig(config: Record<string, unknown>): void {
@@ -231,12 +330,12 @@ async function main(): Promise<void> {
   if (args.includes("--status")) {
     const config = loadUserConfig();
     const quiet = getQuietModeStatus(config);
-    const trayPid = getRunningTrayPid();
+    const trayInfo = getRunningTrayInfo();
     console.log(
       JSON.stringify(
         {
-          trayRunning: trayPid !== null,
-          trayPid,
+          trayRunning: trayInfo !== null,
+          trayPid: trayInfo?.pid ?? null,
           quietMode: quiet.active,
           ...(quiet.reason && { quietReason: quiet.reason }),
           ...(quiet.quietUntil && { quietUntil: quiet.quietUntil }),
@@ -294,24 +393,24 @@ async function main(): Promise<void> {
   }
 
   if (args.includes("--stop")) {
-    const pid = getRunningTrayPid();
-    if (!pid) {
+    const trayInfo = getRunningTrayInfo();
+    if (!trayInfo) {
       console.log("Local Voice MCP tray is not currently running.");
       return;
     }
     try {
-      const stopped = await stopTrayProcess(pid);
+      const stopped = await stopTrayProcess(trayInfo);
       if (stopped) {
-        console.log(`Stopped Local Voice MCP tray (PID ${pid}).`);
+        console.log(`Stopped Local Voice MCP tray (PID ${trayInfo.pid}).`);
       } else {
         console.error(
-          `Timed out waiting for Local Voice MCP tray (PID ${pid}) to stop.`
+          `Timed out waiting for Local Voice MCP tray (PID ${trayInfo.pid}) to stop.`
         );
         process.exit(1);
       }
     } catch (err) {
       console.error(
-        `Failed to stop PID ${pid}: ${
+        `Failed to stop PID ${trayInfo.pid}: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
@@ -321,18 +420,18 @@ async function main(): Promise<void> {
   }
 
   const force = args.includes("--force");
-  const existingPid = getRunningTrayPid();
-  if (existingPid) {
+  const existingInfo = getRunningTrayInfo();
+  if (existingInfo) {
     if (!force) {
       console.log(
-        `Local Voice MCP tray is already running (PID ${existingPid}).`
+        `Local Voice MCP tray is already running (PID ${existingInfo.pid}).`
       );
       return;
     }
-    const stopped = await stopTrayProcess(existingPid);
+    const stopped = await stopTrayProcess(existingInfo);
     if (!stopped) {
       throw new Error(
-        `Timed out waiting for existing tray instance (PID ${existingPid}) to exit.`
+        `Timed out waiting for existing tray instance (PID ${existingInfo.pid}) to exit.`
       );
     }
   }
@@ -345,55 +444,101 @@ async function main(): Promise<void> {
     throw new Error(`Tray script not found at: ${scriptPath}`);
   }
 
-  const pyArgs = [scriptPath, ...(force ? ["--force"] : [])];
   const background = args.includes("-d") || args.includes("--background");
 
   if (background) {
+    const readyFile = path.join(
+      os.tmpdir(),
+      `local-voice-mcp-tray-ready-${process.pid}-${Date.now()}`
+    );
+    const pyArgs = [
+      scriptPath,
+      "--ready-file",
+      readyFile,
+      ...(force ? ["--force"] : []),
+    ];
+
     const child = spawn(pythonPath, pyArgs, {
       detached: true,
       stdio: "ignore",
     });
 
-    // Wait briefly to detect immediate startup failures (e.g., bad Python env or crash)
-    // before detaching and reporting success to callers such as ENABLE_TRAY=true.
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const done = (err?: Error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        child.removeListener("error", onError);
-        child.removeListener("exit", onExit);
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      };
+    type StartupOutcome = "started" | "already_running";
+    const startupTimeoutMs = force ? 15000 : 10000;
 
-      const onError = (err: Error) => {
-        done(new Error(`Failed to start tray app: ${err.message}`));
-      };
+    let outcome: StartupOutcome;
+    try {
+      outcome = await new Promise<StartupOutcome>((resolve, reject) => {
+        let settled = false;
+        const done = (err?: Error, result?: StartupOutcome) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearInterval(pollTimer);
+          clearTimeout(timeoutTimer);
+          child.removeListener("error", onError);
+          child.removeListener("exit", onExit);
+          if (err) {
+            reject(err);
+          } else {
+            resolve(result || "started");
+          }
+        };
 
-      const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
-        if (code === 0) {
-          // Exited cleanly (e.g., another instance already held the lock)
-          done();
-        } else {
+        const onError = (err: Error) => {
+          done(new Error(`Failed to start tray app: ${err.message}`));
+        };
+
+        const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
+          if (code === 0) {
+            // Exited cleanly before signaling readiness (another instance holds the lock)
+            done(undefined, "already_running");
+          } else {
+            done(
+              new Error(
+                `Tray app failed during startup (code=${code ?? "null"}, signal=${sig ?? "null"})`
+              )
+            );
+          }
+        };
+
+        const pollTimer = setInterval(() => {
+          if (fs.existsSync(readyFile)) {
+            done(undefined, "started");
+          }
+        }, 100);
+
+        const timeoutTimer = setTimeout(() => {
           done(
             new Error(
-              `Tray app exited immediately (code=${code ?? "null"}, signal=${sig ?? "null"})`
+              `Timed out after ${startupTimeoutMs / 1000}s waiting for Local Voice MCP tray to initialize.`
             )
           );
-        }
-      };
+        }, startupTimeoutMs);
 
-      const timer = setTimeout(() => done(), 1000);
-      child.on("error", onError);
-      child.on("exit", onExit);
-    });
+        child.on("error", onError);
+        child.on("exit", onExit);
+      });
+    } finally {
+      try {
+        if (fs.existsSync(readyFile)) {
+          fs.unlinkSync(readyFile);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    if (outcome === "already_running") {
+      const running = getRunningTrayInfo();
+      console.log(
+        running
+          ? `Local Voice MCP tray is already running (PID ${running.pid}).`
+          : "Local Voice MCP tray is already running."
+      );
+      return;
+    }
 
     child.unref();
     console.log(
@@ -402,6 +547,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  const pyArgs = [scriptPath, ...(force ? ["--force"] : [])];
   const child = spawn(pythonPath, pyArgs, { stdio: "inherit" });
   child.on("close", (code) => {
     process.exit(code ?? 0);

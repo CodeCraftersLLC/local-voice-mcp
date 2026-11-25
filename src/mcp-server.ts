@@ -75,9 +75,13 @@ export function maybeStartTrayHelper(): void {
     child.on("error", (error) => {
       logger.warn(`Failed to launch tray helper: ${error.message}`);
     });
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (code === 0) {
         logger.info("Background tray helper started (ENABLE_TRAY=true)");
+      } else if (signal) {
+        logger.warn(
+          `Tray helper terminated by signal ${signal}; run local-voice-mcp-tray --background in a terminal to see the error.`
+        );
       } else if (code !== null) {
         logger.warn(
           `Tray helper exited with code ${code}; run local-voice-mcp-tray --background in a terminal to see the error.`
