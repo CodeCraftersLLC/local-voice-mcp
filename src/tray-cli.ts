@@ -18,13 +18,31 @@ interface RecordedPidInfo {
 
 const PYTHON_BIN_REGEX = /^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$/i;
 
+function resolveInterpreterExecutable(candidate: string): string | null {
+  const probe = spawnSync(
+    candidate,
+    ["-c", "import sys; print(sys.executable)"],
+    { encoding: "utf-8", timeout: 5000 }
+  );
+  if (!probe.error && probe.status === 0 && typeof probe.stdout === "string") {
+    const resolved = probe.stdout.trim();
+    if (resolved.length > 0) {
+      return resolved;
+    }
+    return candidate;
+  }
+  return null;
+}
+
 function resolvePythonPath(): string {
   const explicit =
     process.env.TRAY_PYTHON_PATH ||
     process.env.PYTHON_PATH ||
     process.env.CHATTERBOX_PYTHON_PATH;
   if (explicit) {
-    return explicit;
+    // Resolve launchers/shims (e.g. py.exe on Windows) to the actual Python executable
+    // so spawned child.pid matches the Python process writing tray.pid and the ready marker.
+    return resolveInterpreterExecutable(explicit) || explicit;
   }
 
   const candidates =
@@ -33,12 +51,9 @@ function resolvePythonPath(): string {
       : ["python3", "python"];
 
   for (const candidate of candidates) {
-    const probe = spawnSync(candidate, ["--version"], {
-      stdio: "ignore",
-      timeout: 3000,
-    });
-    if (!probe.error && probe.status === 0) {
-      return candidate;
+    const resolved = resolveInterpreterExecutable(candidate);
+    if (resolved) {
+      return resolved;
     }
   }
 
@@ -280,12 +295,29 @@ function readRecordedPidInfo(): RecordedPidInfo | null {
   }
 }
 
-function getRunningTrayInfo(): RecordedPidInfo | null {
+type RunningTrayProbe =
+  | { status: "running"; info: RecordedPidInfo }
+  | { status: "not_running" }
+  | { status: "unknown"; info: RecordedPidInfo };
+
+function probeRunningTray(): RunningTrayProbe {
   const info = readRecordedPidInfo();
   if (!info) {
-    return null;
+    return { status: "not_running" };
   }
-  return verifyTrayProcess(info.pid, info.scriptPath) === "match" ? info : null;
+  const identity = verifyTrayProcess(info.pid, info.scriptPath);
+  if (identity === "match") {
+    return { status: "running", info };
+  }
+  if (identity === "unknown") {
+    return { status: "unknown", info };
+  }
+  return { status: "not_running" };
+}
+
+function getRunningTrayInfo(): RecordedPidInfo | null {
+  const probe = probeRunningTray();
+  return probe.status === "running" ? probe.info : null;
 }
 
 async function stopTrayProcess(
@@ -319,6 +351,65 @@ async function stopTrayProcess(
     await new Promise((r) => setTimeout(r, 100));
   }
   return !isPidRunning(info.pid);
+}
+
+function getConfigLockPath(): string {
+  return path.join(path.dirname(getUserConfigPath()), "config.lock");
+}
+
+async function withConfigLock<T>(
+  fn: () => T,
+  timeoutMs = 5000,
+  staleAfterMs = 15000
+): Promise<T> {
+  const lockPath = getConfigLockPath();
+  const configDir = path.dirname(lockPath);
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let fd: number | null = null;
+
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lockPath, "wx", 0o600);
+      fs.writeSync(fd, `${process.pid}\n`);
+    } catch (err: any) {
+      if (err && err.code === "EEXIST") {
+        try {
+          const stat = fs.statSync(lockPath);
+          if (Date.now() - stat.mtimeMs > staleAfterMs) {
+            fs.unlinkSync(lockPath);
+            continue;
+          }
+        } catch {
+          // Lock disappeared concurrently; retry
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out waiting for config lock at ${lockPath}`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // Ignore close errors
+    }
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // Ignore unlink errors
+    }
+  }
 }
 
 function saveUserConfig(config: Record<string, unknown>): void {
@@ -436,11 +527,14 @@ async function main(): Promise<void> {
       console.error("Error: --quiet requires 'on' or 'off'");
       process.exit(1);
     }
-    const config = loadRawUserConfigStrict();
-    config.quietMode = val === "on";
-    config.quietUntil = null;
-    saveUserConfig(config);
-    console.log(`Quiet Mode ${config.quietMode ? "enabled" : "disabled"}.`);
+    const enabled = val === "on";
+    await withConfigLock(() => {
+      const config = loadRawUserConfigStrict();
+      config.quietMode = enabled;
+      config.quietUntil = null;
+      saveUserConfig(config);
+    });
+    console.log(`Quiet Mode ${enabled ? "enabled" : "disabled"}.`);
     return;
   }
 
@@ -452,10 +546,12 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const raw = rawArg.trim().toLowerCase();
-    const config = loadRawUserConfigStrict();
     if (raw === "default" || raw === "reset") {
-      config.volume = null;
-      saveUserConfig(config);
+      await withConfigLock(() => {
+        const config = loadRawUserConfigStrict();
+        config.volume = null;
+        saveUserConfig(config);
+      });
       console.log("Playback volume reset to default.");
       return;
     }
@@ -464,18 +560,28 @@ async function main(): Promise<void> {
       console.error("Error: --volume must be an integer 0-100 or 'default'");
       process.exit(1);
     }
-    config.volume = parsed;
-    saveUserConfig(config);
+    await withConfigLock(() => {
+      const config = loadRawUserConfigStrict();
+      config.volume = parsed;
+      saveUserConfig(config);
+    });
     console.log(`Playback volume set to ${parsed}%.`);
     return;
   }
 
   if (args.includes("--stop")) {
-    const trayInfo = getRunningTrayInfo();
-    if (!trayInfo) {
+    const probe = probeRunningTray();
+    if (probe.status === "not_running") {
       console.log("Local Voice MCP tray is not currently running.");
       return;
     }
+    if (probe.status === "unknown") {
+      console.error(
+        `Failed to verify whether live PID ${probe.info.pid} is the Local Voice MCP tray; refusing to send signal.`
+      );
+      process.exit(1);
+    }
+    const trayInfo = probe.info;
     try {
       const stopped = await stopTrayProcess(trayInfo);
       if (stopped) {
@@ -498,8 +604,14 @@ async function main(): Promise<void> {
   }
 
   const force = args.includes("--force");
-  const existingInfo = getRunningTrayInfo();
-  if (existingInfo) {
+  const initialProbe = probeRunningTray();
+  if (initialProbe.status === "unknown") {
+    throw new Error(
+      `Could not verify whether live PID ${initialProbe.info.pid} is the Local Voice MCP tray.`
+    );
+  }
+  if (initialProbe.status === "running") {
+    const existingInfo = initialProbe.info;
     if (!force) {
       console.log(
         `Local Voice MCP tray is already running (PID ${existingInfo.pid}).`
@@ -546,11 +658,20 @@ async function main(): Promise<void> {
       stdio: "ignore",
     });
 
-    type StartupOutcome = "started" | "already_running";
+    type StartupResult =
+      | { outcome: "started"; pid: number }
+      | { outcome: "already_running" };
     const startupTimeoutMs = force ? 15000 : 10000;
 
     const terminateHungChild = async (): Promise<void> => {
-      if (!child.pid || !isPidRunning(child.pid)) {
+      const childPid = child.pid;
+      const isLiveChild = (): boolean =>
+        childPid !== undefined &&
+        child.exitCode === null &&
+        child.signalCode === null &&
+        isPidRunning(childPid);
+
+      if (!isLiveChild()) {
         return;
       }
       try {
@@ -560,12 +681,12 @@ async function main(): Promise<void> {
       }
       const stopDeadline = Date.now() + 2000;
       while (Date.now() < stopDeadline) {
-        if (!isPidRunning(child.pid)) {
+        if (!isLiveChild()) {
           return;
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      if (isPidRunning(child.pid)) {
+      if (isLiveChild()) {
         try {
           child.kill("SIGKILL");
         } catch {
@@ -574,12 +695,12 @@ async function main(): Promise<void> {
       }
     };
 
-    let outcome: StartupOutcome;
+    let startupResult: StartupResult;
     let timedOut = false;
     try {
-      outcome = await new Promise<StartupOutcome>((resolve, reject) => {
+      startupResult = await new Promise<StartupResult>((resolve, reject) => {
         let settled = false;
-        const done = (err?: Error, result?: StartupOutcome) => {
+        const done = (err?: Error, result?: StartupResult) => {
           if (settled) {
             return;
           }
@@ -590,8 +711,32 @@ async function main(): Promise<void> {
           child.removeListener("exit", onExit);
           if (err) {
             reject(err);
-          } else {
-            resolve(result || "started");
+          } else if (result) {
+            resolve(result);
+          }
+        };
+
+        const checkReadyMarker = () => {
+          if (settled || !fs.existsSync(readyFile)) {
+            return;
+          }
+          try {
+            const raw = fs.readFileSync(readyFile, "utf-8").trim();
+            if (raw === "already_running") {
+              done(undefined, { outcome: "already_running" });
+              return;
+            }
+            const readyPrefix = raw.startsWith("ready:") ? raw.slice(6) : raw;
+            const markerPid = parseInt(readyPrefix, 10);
+            if (
+              Number.isInteger(markerPid) &&
+              markerPid > 0 &&
+              (markerPid === child.pid || isPidRunning(markerPid))
+            ) {
+              done(undefined, { outcome: "started", pid: markerPid });
+            }
+          } catch {
+            // Marker may still be flushing; retry next poll
           }
         };
 
@@ -600,34 +745,25 @@ async function main(): Promise<void> {
         };
 
         const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
-          if (code === 0) {
-            // Exited cleanly before signaling readiness (another instance holds the lock)
-            done(undefined, "already_running");
-          } else {
-            done(
-              new Error(
-                `Tray app failed during startup (code=${code ?? "null"}, signal=${sig ?? "null"})`
-              )
-            );
-          }
-        };
-
-        const pollTimer = setInterval(() => {
-          if (!fs.existsSync(readyFile)) {
+          // Check whether tray_app.py wrote an explicit already_running/ready marker before exiting
+          checkReadyMarker();
+          if (settled) {
             return;
           }
-          try {
-            const rawPid = fs.readFileSync(readyFile, "utf-8").trim();
-            const markerPid = parseInt(rawPid, 10);
-            if (child.pid && markerPid === child.pid) {
-              done(undefined, "started");
-            }
-          } catch {
-            // Marker may still be flushing; retry next poll
-          }
-        }, 100);
+          done(
+            new Error(
+              `Tray app exited before signaling readiness (code=${code ?? "null"}, signal=${sig ?? "null"})`
+            )
+          );
+        };
+
+        const pollTimer = setInterval(checkReadyMarker, 100);
 
         const timeoutTimer = setTimeout(() => {
+          checkReadyMarker();
+          if (settled) {
+            return;
+          }
           timedOut = true;
           done(
             new Error(
@@ -652,7 +788,7 @@ async function main(): Promise<void> {
       }
     }
 
-    if (outcome === "already_running") {
+    if (startupResult.outcome === "already_running") {
       const running = getRunningTrayInfo();
       console.log(
         running
@@ -664,15 +800,18 @@ async function main(): Promise<void> {
 
     child.unref();
     console.log(
-      `Started Local Voice MCP tray in background (PID ${child.pid}).`
+      `Started Local Voice MCP tray in background (PID ${startupResult.pid}).`
     );
     return;
   }
 
   const pyArgs = [scriptPath, ...(force ? ["--force"] : [])];
   const child = spawn(pythonPath, pyArgs, { stdio: "inherit" });
-  child.on("close", (code) => {
-    process.exit(code ?? 0);
+  child.on("close", (code, signal) => {
+    if (signal) {
+      process.exit(1);
+    }
+    process.exit(code ?? 1);
   });
   child.on("error", (err) => {
     console.error(`Failed to start tray app: ${err.message}`);

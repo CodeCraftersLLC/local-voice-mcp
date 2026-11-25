@@ -171,6 +171,21 @@ describe("user-config", () => {
     ).toEqual({});
   });
 
+  it("rejects hour 24 timestamps to match Python fromisoformat", () => {
+    expect(parseIsoTimestampUtc("2030-03-01T24:00:00")).toBeNaN();
+    expect(parseIsoTimestampUtc("2030-03-01T24:00:00Z")).toBeNaN();
+    expect(parseIsoTimestampUtc("2030-03-01T24:00:00+00:00")).toBeNaN();
+    expect(parseIsoTimestampUtc("2030-03-02T00:00:00")).toBe(
+      Date.parse("2030-03-02T00:00:00Z")
+    );
+    expect(
+      getQuietModeStatus(
+        { quietMode: false, quietUntil: "2030-03-01T24:00:00" },
+        Date.parse("2030-03-01T12:00:00Z")
+      )
+    ).toEqual({ active: false });
+  });
+
   it("throws Cannot read user config when LOCAL_VOICE_MCP_CONFIG points at a directory", () => {
     process.env.LOCAL_VOICE_MCP_CONFIG = tempDir;
     expect(() => loadUserConfigStrict()).toThrow(/Cannot read user config/);

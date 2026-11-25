@@ -17,6 +17,8 @@ export interface QuietModeStatus {
 }
 
 const ISO_DATE_PREFIX_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/i;
+const ISO_TIME_PART_REGEX =
+  /^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i;
 const ISO_WITHOUT_TZ_REGEX =
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/i;
 
@@ -106,6 +108,18 @@ export function parseIsoTimestampUtc(value: string): number {
       checkDate.getUTCMonth() !== month - 1 ||
       checkDate.getUTCDate() !== day
     ) {
+      return Number.NaN;
+    }
+  }
+
+  // Reject out-of-range time components (e.g., hour 24 such as 2030-03-01T24:00:00)
+  // that V8 Date.parse rolls into the next day while Python fromisoformat rejects.
+  const timeMatch = ISO_TIME_PART_REGEX.exec(trimmed);
+  if (timeMatch) {
+    const hour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    const second = timeMatch[3] !== undefined ? Number(timeMatch[3]) : 0;
+    if (hour > 23 || minute > 59 || second > 59) {
       return Number.NaN;
     }
   }

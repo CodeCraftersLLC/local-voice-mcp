@@ -42,6 +42,7 @@ else:
 
 PID_FILE = os.path.join(CONFIG_DIR, "tray.pid")
 LOCK_FILE = os.path.join(CONFIG_DIR, "tray.lock")
+CONFIG_LOCK_FILE = os.path.join(CONFIG_DIR, "config.lock")
 SCRIPT_REALPATH = os.path.realpath(__file__)
 PYTHON_BIN_PATTERN = re.compile(r"^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$", re.IGNORECASE)
 
@@ -440,7 +441,8 @@ def save_config(config: dict) -> None:
     fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".json", dir=CONFIG_DIR)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-            json.dump(config, tmp_file, indent=2)
+            # Reject non-standard Infinity/NaN tokens so Node JSON.parse always accepts the file
+            json.dump(config, tmp_file, indent=2, allow_nan=False)
             tmp_file.write("\n")
         os.replace(tmp_path, CONFIG_FILE)
     finally:
@@ -449,6 +451,48 @@ def save_config(config: dict) -> None:
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+
+def acquire_config_lock(timeout_s: float = 5.0, stale_after_s: float = 15.0) -> int:
+    """
+    Acquire a cross-language exclusive lockfile (shared with Node tray-cli.ts)
+    to serialize read-modify-write updates to config.json.
+    """
+    ensure_config_dir()
+    deadline = time.monotonic() + timeout_s
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    while True:
+        try:
+            fd = os.open(CONFIG_LOCK_FILE, flags, 0o600)
+            os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+            return fd
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(CONFIG_LOCK_FILE)
+                if age > stale_after_s:
+                    os.remove(CONFIG_LOCK_FILE)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Timed out waiting for config lock at {CONFIG_LOCK_FILE}"
+                )
+            time.sleep(0.05)
+
+
+def release_config_lock(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.remove(CONFIG_LOCK_FILE)
+    except OSError:
+        pass
 
 
 def parse_iso_utc(value) -> datetime | None:
@@ -505,26 +549,30 @@ def create_speaker_icon(muted: bool) -> Image.Image:
     return img
 
 
-def write_ready_marker(ready_file: str | None) -> None:
+def write_ready_marker(ready_file: str | None, payload: str | None = None) -> None:
     if not ready_file:
         return
+    content = payload if payload is not None else f"ready:{os.getpid()}\n"
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         fd = os.open(ready_file, flags, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"{os.getpid()}\n")
+            f.write(content)
     except OSError:
         pass
 
 
 def build_tray_app(ready_file: str | None = None):
     stop_event = threading.Event()
+    initial_quiet = is_quiet_active()
+    displayed_state = {"quiet": initial_quiet}
 
-    def refresh_icon(icon_obj):
-        cfg = load_config()
-        muted = is_quiet_active(cfg)
+    def refresh_icon(icon_obj, cfg: dict | None = None):
+        current_cfg = cfg if cfg is not None else load_config()
+        muted = is_quiet_active(current_cfg)
+        displayed_state["quiet"] = muted
         icon_obj.icon = create_speaker_icon(muted)
         icon_obj.title = (
             "Local Voice MCP — Quiet Mode ON"
@@ -534,17 +582,22 @@ def build_tray_app(ready_file: str | None = None):
         icon_obj.update_menu()
 
     def update_config(icon_obj, mutator):
+        lock_fd = None
         try:
+            lock_fd = acquire_config_lock()
             cfg = load_config_strict()
-        except Exception as exc:
+            mutator(cfg)
+            save_config(cfg)
+        except (OSError, ValueError, TimeoutError) as exc:
             print(
-                f"Refusing to overwrite malformed/unreadable config at {CONFIG_FILE}: {exc}",
+                f"Refusing to overwrite config at {CONFIG_FILE}: {exc}",
                 file=sys.stderr,
             )
             return
-        mutator(cfg)
-        save_config(cfg)
-        refresh_icon(icon_obj)
+        finally:
+            if lock_fd is not None:
+                release_config_lock(lock_fd)
+        refresh_icon(icon_obj, cfg)
 
     def toggle_quiet_mode(icon_obj, _item):
         def _mutate(cfg):
@@ -711,7 +764,6 @@ def build_tray_app(ready_file: str | None = None):
         pystray.MenuItem("Quit Tray", exit_app),
     )
 
-    initial_quiet = is_quiet_active()
     tray_icon = pystray.Icon(
         "LocalVoiceMCP",
         create_speaker_icon(initial_quiet),
@@ -738,16 +790,16 @@ def build_tray_app(ready_file: str | None = None):
                 pass
 
         icon_obj.visible = True
-        write_ready_marker(ready_file)
-        last_state = is_quiet_active()
+        # Sync displayed icon and cached state to the same fresh config snapshot
+        refresh_icon(icon_obj)
+        write_ready_marker(ready_file, f"ready:{os.getpid()}\n")
 
         def watch_loop():
-            nonlocal last_state
             while not stop_event.wait(2.0):
-                current_state = is_quiet_active()
-                if current_state != last_state:
-                    last_state = current_state
-                    refresh_icon(icon_obj)
+                cfg = load_config()
+                current_state = is_quiet_active(cfg)
+                if current_state != displayed_state["quiet"]:
+                    refresh_icon(icon_obj, cfg)
 
         watcher = threading.Thread(target=watch_loop, daemon=True)
         watcher.start()
@@ -768,6 +820,7 @@ def main():
 
     lock_result = acquire_single_instance_lock(force=force)
     if lock_result == "already_running":
+        write_ready_marker(ready_file, "already_running\n")
         sys.exit(0)
     if lock_result == "timeout":
         sys.exit(1)
