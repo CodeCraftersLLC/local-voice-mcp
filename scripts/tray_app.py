@@ -302,10 +302,20 @@ def terminate_process(pid: int, expected_script_path: str | None = None) -> bool
         return False
 
 
-def _try_acquire_os_lock():
-    """Atomically acquire a non-blocking exclusive OS file lock on LOCK_FILE."""
-    ensure_config_dir()
-    handle = open(LOCK_FILE, "a+", encoding="utf-8")
+def _try_acquire_os_lock() -> tuple[str, object]:
+    """
+    Atomically acquire a non-blocking exclusive OS file lock on LOCK_FILE.
+    Returns:
+      - ("acquired", handle): exclusive lock held
+      - ("locked", None): lock is held by another live instance
+      - ("error", exc): filesystem/permission error opening directory or lock file
+    """
+    try:
+        ensure_config_dir()
+        handle = open(LOCK_FILE, "a+", encoding="utf-8")
+    except OSError as exc:
+        return "error", exc
+
     try:
         if sys.platform == "win32":
             import msvcrt
@@ -320,10 +330,16 @@ def _try_acquire_os_lock():
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return handle
-    except OSError:
+        return "acquired", handle
+    except BlockingIOError:
         handle.close()
-        return None
+        return "locked", None
+    except OSError as exc:
+        handle.close()
+        if sys.platform == "win32" and exc.errno in (13, 36):
+            # EACCES / EDEADLK from msvcrt.locking indicates an active lock
+            return "locked", None
+        return "error", exc
 
 
 def _release_os_lock(handle) -> None:
@@ -354,11 +370,19 @@ def acquire_single_instance_lock(force: bool = False) -> str:
       - "acquired": lock acquired by this process
       - "already_running": another instance holds the lock and force=False
       - "timeout": force=True failed to replace the existing instance before deadline
+      - "error": filesystem or permission error prevented accessing the lock file
     """
     global _lock_file_handle
-    ensure_config_dir()
 
-    handle = _try_acquire_os_lock()
+    status, handle_or_err = _try_acquire_os_lock()
+    if status == "error":
+        print(
+            f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {handle_or_err}",
+            file=sys.stderr,
+        )
+        return "error"
+
+    handle = handle_or_err if status == "acquired" else None
     if handle is None:
         existing_pid, recorded_script = read_recorded_pid_info()
         if not force:
@@ -375,9 +399,16 @@ def acquire_single_instance_lock(force: bool = False) -> str:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             time.sleep(0.1)
-            handle = _try_acquire_os_lock()
-            if handle is not None:
+            retry_status, retry_val = _try_acquire_os_lock()
+            if retry_status == "acquired":
+                handle = retry_val
                 break
+            if retry_status == "error":
+                print(
+                    f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {retry_val}",
+                    file=sys.stderr,
+                )
+                return "error"
 
         if handle is None:
             print(
@@ -924,7 +955,7 @@ def main():
     if lock_result == "already_running":
         write_ready_marker(ready_file, "already_running\n")
         sys.exit(0)
-    if lock_result == "timeout":
+    if lock_result != "acquired":
         sys.exit(1)
 
     load_config()
