@@ -16,6 +16,7 @@ export interface QuietModeStatus {
   quietUntil?: string;
 }
 
+const ISO_DATE_PREFIX_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/;
 const ISO_WITHOUT_TZ_REGEX =
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
 
@@ -85,13 +86,30 @@ export function normalizeUserConfig(raw: Record<string, unknown>): UserConfig {
 
 /**
  * Parse an ISO-8601 timestamp consistently with scripts/tray_app.py:
- * timezone-less date-time strings are normalized to UTC rather than local time.
+ * - Rejects impossible calendar dates (e.g., 2026-02-30) that Date.parse would roll forward.
+ * - Normalizes timezone-less date-time strings to UTC rather than local time.
  */
 export function parseIsoTimestampUtc(value: string): number {
   const trimmed = value.trim();
   if (!trimmed) {
     return Number.NaN;
   }
+
+  const dateMatch = ISO_DATE_PREFIX_REGEX.exec(trimmed);
+  if (dateMatch) {
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+    const checkDate = new Date(Date.UTC(year, month - 1, day));
+    if (
+      checkDate.getUTCFullYear() !== year ||
+      checkDate.getUTCMonth() !== month - 1 ||
+      checkDate.getUTCDate() !== day
+    ) {
+      return Number.NaN;
+    }
+  }
+
   const normalized = ISO_WITHOUT_TZ_REGEX.test(trimmed)
     ? `${trimmed.replace(" ", "T")}Z`
     : trimmed;
@@ -99,11 +117,12 @@ export function parseIsoTimestampUtc(value: string): number {
 }
 
 /**
- * Read and parse the user configuration file strictly.
- * Returns {} if the file does not exist (ENOENT), but throws on read/JSON/type
- * errors so write paths never silently overwrite a corrupt config file.
+ * Read and parse the raw JSON object from the user configuration file strictly.
+ * Returns {} if the file does not exist (ENOENT), but throws on read, JSON syntax,
+ * or non-object root errors. Preserves all keys (including unknown keys) for safe
+ * read-modify-write updates.
  */
-export function loadUserConfigStrict(): UserConfig {
+export function loadRawUserConfigStrict(): Record<string, unknown> {
   const configPath = getUserConfigPath();
   let raw: string;
   try {
@@ -140,7 +159,17 @@ export function loadUserConfigStrict(): UserConfig {
     );
   }
 
-  return normalizeUserConfig(parsed as Record<string, unknown>);
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Read, parse, and normalize the user configuration file strictly.
+ * Returns {} if the file does not exist (ENOENT). Throws on read, JSON syntax,
+ * or non-object root errors; invalid individual field values are ignored during
+ * normalization.
+ */
+export function loadUserConfigStrict(): UserConfig {
+  return normalizeUserConfig(loadRawUserConfigStrict());
 }
 
 /**

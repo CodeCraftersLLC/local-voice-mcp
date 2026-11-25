@@ -7,9 +7,8 @@ import * as path from "path";
 import {
   getQuietModeStatus,
   getUserConfigPath,
+  loadRawUserConfigStrict,
   loadUserConfig,
-  loadUserConfigStrict,
-  UserConfig,
 } from "./utils/user-config";
 
 function resolvePythonPath(): string {
@@ -74,7 +73,7 @@ function isTrayProcess(pid: number): boolean {
           "-Command",
           `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
         ],
-        { encoding: "utf-8", timeout: 3000 }
+        { encoding: "utf-8", timeout: 10000 }
       );
       return (
         !probe.error &&
@@ -145,7 +144,7 @@ async function stopTrayProcess(pid: number, timeoutMs = 5000): Promise<boolean> 
   return !isPidRunning(pid);
 }
 
-function saveUserConfig(config: UserConfig): void {
+function saveUserConfig(config: Record<string, unknown>): void {
   const configPath = getUserConfigPath();
   const configDir = path.dirname(configPath);
   if (!fs.existsSync(configDir)) {
@@ -260,7 +259,7 @@ async function main(): Promise<void> {
       console.error("Error: --quiet requires 'on' or 'off'");
       process.exit(1);
     }
-    const config = loadUserConfigStrict();
+    const config = loadRawUserConfigStrict();
     config.quietMode = val === "on";
     config.quietUntil = null;
     saveUserConfig(config);
@@ -276,7 +275,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const raw = rawArg.trim().toLowerCase();
-    const config = loadUserConfigStrict();
+    const config = loadRawUserConfigStrict();
     if (raw === "default" || raw === "reset") {
       config.volume = null;
       saveUserConfig(config);
@@ -354,6 +353,48 @@ async function main(): Promise<void> {
       detached: true,
       stdio: "ignore",
     });
+
+    // Wait briefly to detect immediate startup failures (e.g., bad Python env or crash)
+    // before detaching and reporting success to callers such as ENABLE_TRAY=true.
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const done = (err?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        child.removeListener("error", onError);
+        child.removeListener("exit", onExit);
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      const onError = (err: Error) => {
+        done(new Error(`Failed to start tray app: ${err.message}`));
+      };
+
+      const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
+        if (code === 0) {
+          // Exited cleanly (e.g., another instance already held the lock)
+          done();
+        } else {
+          done(
+            new Error(
+              `Tray app exited immediately (code=${code ?? "null"}, signal=${sig ?? "null"})`
+            )
+          );
+        }
+      };
+
+      const timer = setTimeout(() => done(), 1000);
+      child.on("error", onError);
+      child.on("exit", onExit);
+    });
+
     child.unref();
     console.log(
       `Started Local Voice MCP tray in background (PID ${child.pid}).`

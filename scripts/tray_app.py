@@ -108,7 +108,7 @@ def is_tray_process(pid: int) -> bool:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=3,
+                timeout=10,
                 check=False,
             )
             return result.returncode == 0 and "tray_app.py" in (result.stdout or "")

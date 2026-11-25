@@ -4,6 +4,7 @@ import * as path from "path";
 import {
   getQuietModeStatus,
   getUserConfigPath,
+  loadRawUserConfigStrict,
   loadUserConfig,
   loadUserConfigStrict,
   normalizeUserConfig,
@@ -144,5 +145,36 @@ describe("user-config", () => {
       volume: 0,
       useMaleVoice: false,
     });
+  });
+
+  it("rejects impossible calendar dates such as February 30", () => {
+    expect(parseIsoTimestampUtc("2026-02-30T12:00:00Z")).toBeNaN();
+    expect(parseIsoTimestampUtc("2026-04-31T00:00:00")).toBeNaN();
+    expect(
+      getQuietModeStatus(
+        { quietMode: false, quietUntil: "2026-02-30T12:00:00Z" },
+        Date.parse("2026-02-01T00:00:00Z")
+      )
+    ).toEqual({ active: false });
+    expect(
+      normalizeUserConfig({ quietUntil: "2026-02-30T12:00:00Z" })
+    ).toEqual({});
+  });
+
+  it("throws Cannot read user config when LOCAL_VOICE_MCP_CONFIG points at a directory", () => {
+    process.env.LOCAL_VOICE_MCP_CONFIG = tempDir;
+    expect(() => loadUserConfigStrict()).toThrow(/Cannot read user config/);
+    expect(loadUserConfig()).toEqual({});
+  });
+
+  it("preserves unrecognized custom keys via loadRawUserConfigStrict", () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ quietMode: false, customKey: "keep-me", nested: { a: 1 } }),
+      "utf-8"
+    );
+    const raw = loadRawUserConfigStrict();
+    expect(raw.customKey).toBe("keep-me");
+    expect(raw.nested).toEqual({ a: 1 });
   });
 });
