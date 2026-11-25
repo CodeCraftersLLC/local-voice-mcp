@@ -18,7 +18,8 @@
   },
   "homepage": "https://github.com/CodeCraftersLLC/local-voice-mcp#readme",
   "scripts": {
-    "test": "npx jest",
+    "test": "npx jest && npm run test:python",
+    "test:python": "node -e \"const {spawnSync}=require('child_process');const cands=process.platform==='win32'?['python','py','python3']:['python3','python'];const py=cands.find(c=>!spawnSync(c,['--version'],{stdio:'ignore'}).error);if(!py){console.error('Python not found');process.exit(1);}const r=spawnSync(py,['-B','-m','unittest','discover','-s','tests/scripts','-v'],{stdio:'inherit'});process.exit(r.status??1);\"",
     "build": "tsc && node -e \"const fs=require('fs');['dist/mcp-server.js','dist/tray-cli.js'].forEach(f=>fs.existsSync(f)&&fs.chmodSync(f,0o755))\"",
     "tray": "npm run build && node dist/tray-cli.js",
     "start": "ts-node src/server.ts",

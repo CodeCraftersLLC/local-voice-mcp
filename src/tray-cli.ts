@@ -355,7 +355,7 @@ async function stopTrayProcess(
 }
 
 function getConfigLockPath(): string {
-  return `${getUserConfigPath()}.lock`;
+  return `${getUserConfigPath()}.config.lock`;
 }
 
 function readConfigLockOwner(

@@ -17,25 +17,24 @@ def _load_tray_module():
     script_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../scripts/tray_app.py")
     )
-    stubbed: dict[str, types.ModuleType | None] = {}
-    for mod_name in ("pystray", "PIL", "PIL.Image", "PIL.ImageDraw"):
-        if mod_name not in sys.modules:
-            try:
-                __import__(mod_name)
-            except ImportError:
-                stub = types.ModuleType(mod_name)
-                if mod_name == "PIL":
-                    stub.Image = types.ModuleType("PIL.Image")  # type: ignore[attr-defined]
-                    stub.ImageDraw = types.ModuleType("PIL.ImageDraw")  # type: ignore[attr-defined]
-                elif mod_name == "PIL.Image":
-                    stub.Image = object  # type: ignore[attr-defined]
-                sys.modules[mod_name] = stub
-                stubbed[mod_name] = stub
+    with mock.patch.dict(sys.modules):
+        for mod_name in ("pystray", "PIL", "PIL.Image", "PIL.ImageDraw"):
+            if mod_name not in sys.modules:
+                try:
+                    __import__(mod_name)
+                except ImportError:
+                    stub = types.ModuleType(mod_name)
+                    if mod_name == "PIL":
+                        stub.Image = types.ModuleType("PIL.Image")  # type: ignore[attr-defined]
+                        stub.ImageDraw = types.ModuleType("PIL.ImageDraw")  # type: ignore[attr-defined]
+                    elif mod_name == "PIL.Image":
+                        stub.Image = object  # type: ignore[attr-defined]
+                    sys.modules[mod_name] = stub
 
-    spec = importlib.util.spec_from_file_location("tray_app_under_test", script_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+        spec = importlib.util.spec_from_file_location("tray_app_under_test", script_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
     return module
 
 
@@ -56,7 +55,7 @@ class TestTrayLocking(unittest.TestCase):
         tray_app.CONFIG_FILE = os.path.join(self.tmpdir.name, "config.json")
         tray_app.PID_FILE = os.path.join(self.tmpdir.name, "tray.pid")
         tray_app.LOCK_FILE = os.path.join(self.tmpdir.name, "tray.lock")
-        tray_app.CONFIG_LOCK_FILE = f"{tray_app.CONFIG_FILE}.lock"
+        tray_app.CONFIG_LOCK_FILE = f"{tray_app.CONFIG_FILE}.config.lock"
         tray_app._lock_file_handle = None
         tray_app._last_lock_error = None
 
@@ -172,6 +171,47 @@ class TestTrayLocking(unittest.TestCase):
             result = tray_app.acquire_single_instance_lock(force=True)
             self.assertEqual(result, "timeout")
             self.assertIn("Timed out", tray_app._last_lock_error or "")
+
+    def test_acquire_single_instance_lock_force_succeeds_after_retry(self):
+        fake_handle = mock.Mock()
+        with mock.patch.object(
+            tray_app,
+            "_try_acquire_os_lock",
+            side_effect=[("locked", None), ("acquired", fake_handle)],
+        ), mock.patch.object(
+            tray_app,
+            "read_recorded_pid_info",
+            return_value=(42424, "/tmp/tray_app.py"),
+        ), mock.patch.object(
+            tray_app, "terminate_process", return_value=True
+        ) as mock_terminate, mock.patch.object(
+            tray_app.time, "sleep"
+        ), mock.patch.object(
+            tray_app.atexit, "register"
+        ):
+            result = tray_app.acquire_single_instance_lock(force=True)
+            self.assertEqual(result, "acquired")
+            mock_terminate.assert_called_once_with(42424, "/tmp/tray_app.py")
+            self.assertIs(tray_app._lock_file_handle, fake_handle)
+            tray_app._lock_file_handle = None
+
+    def test_acquire_single_instance_lock_force_returns_error_during_retry(self):
+        with mock.patch.object(
+            tray_app,
+            "_try_acquire_os_lock",
+            side_effect=[("locked", None), ("error", PermissionError("lock chmod"))],
+        ), mock.patch.object(
+            tray_app,
+            "read_recorded_pid_info",
+            return_value=(42424, "/tmp/tray_app.py"),
+        ), mock.patch.object(
+            tray_app, "terminate_process", return_value=True
+        ), mock.patch.object(
+            tray_app.time, "sleep"
+        ):
+            result = tray_app.acquire_single_instance_lock(force=True)
+            self.assertEqual(result, "error")
+            self.assertIn("lock chmod", tray_app._last_lock_error or "")
 
 
 if __name__ == "__main__":

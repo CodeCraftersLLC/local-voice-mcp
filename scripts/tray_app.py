@@ -44,7 +44,7 @@ else:
 
 PID_FILE = os.path.join(CONFIG_DIR, "tray.pid")
 LOCK_FILE = os.path.join(CONFIG_DIR, "tray.lock")
-CONFIG_LOCK_FILE = f"{CONFIG_FILE}.lock"
+CONFIG_LOCK_FILE = f"{CONFIG_FILE}.config.lock"
 SCRIPT_REALPATH = os.path.realpath(__file__)
 PYTHON_BIN_PATTERN = re.compile(r"^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$", re.IGNORECASE)
 
@@ -624,6 +624,8 @@ def release_config_lock(fd: int, token: str) -> None:
 
 def ensure_config_file_exists() -> None:
     """Create default config.json under the shared config lock if it does not yet exist."""
+    if os.path.exists(CONFIG_FILE):
+        return
     lock_info = None
     try:
         lock_info = acquire_config_lock()
