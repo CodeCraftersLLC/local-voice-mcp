@@ -78,23 +78,23 @@ function tokenizeCommandLine(cmdline: string): string[] {
   return tokens;
 }
 
-function commandLineMatchesTray(
-  cmdline: string,
-  expectedScriptPath: string
-): boolean {
-  const tokens = tokenizeCommandLine(cmdline.trim());
-  if (tokens.length < 2) {
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function argvMatchesTray(argv: string[], expectedScriptPath: string): boolean {
+  if (argv.length < 2) {
     return false;
   }
 
-  const exeBase = path.basename(tokens[0]);
+  const exeBase = path.basename(argv[0]);
   if (!PYTHON_BIN_REGEX.test(exeBase)) {
     return false;
   }
 
   const expectedNorm = normalizePathForCompare(expectedScriptPath);
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
+  for (let i = 1; i < argv.length; i++) {
+    const token = argv[i];
     if (!token || token.startsWith("-")) {
       continue;
     }
@@ -103,6 +103,54 @@ function commandLineMatchesTray(
     }
   }
   return false;
+}
+
+function rawArgsContainsScriptPath(
+  rawArgs: string,
+  expectedScriptPath: string
+): boolean {
+  if (!rawArgs) {
+    return false;
+  }
+  const candidates = new Set<string>([
+    expectedScriptPath,
+    path.resolve(expectedScriptPath),
+    getTrayScriptPath(),
+  ]);
+  try {
+    candidates.add(fs.realpathSync(expectedScriptPath));
+  } catch {
+    // Ignore if path no longer exists
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(candidate)}(?:\\s|$)`);
+    if (pattern.test(rawArgs)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function commandLineMatchesTray(
+  cmdline: string,
+  expectedScriptPath: string,
+  comm?: string
+): boolean {
+  if (!cmdline.trim()) {
+    return false;
+  }
+  if (comm !== undefined) {
+    const exeBase = path.basename(comm.trim());
+    if (!PYTHON_BIN_REGEX.test(exeBase)) {
+      return false;
+    }
+    return rawArgsContainsScriptPath(cmdline, expectedScriptPath);
+  }
+  return argvMatchesTray(tokenizeCommandLine(cmdline.trim()), expectedScriptPath);
 }
 
 function isPidRunning(pid: number): boolean {
@@ -122,7 +170,7 @@ type ProcessIdentityCheck = "match" | "not_running" | "mismatch" | "unknown";
 /**
  * Verify that a live PID is a Python interpreter running the expected tray_app.py
  * script before signaling it, preventing signals to unrelated processes (e.g. an
- * editor opened on tray_app.py) or after PID reuse.
+ * editor opened on tray_app.py) or after PID reuse, while preserving paths with spaces.
  */
 function verifyTrayProcess(
   pid: number,
@@ -154,14 +202,44 @@ function verifyTrayProcess(
         : "mismatch";
     }
 
-    const probe = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
+    // On Linux, /proc/<pid>/cmdline gives exact NUL-separated argv tokens (handles spaces)
+    const procCmdline = `/proc/${pid}/cmdline`;
+    if (process.platform === "linux" && fs.existsSync(procCmdline)) {
+      try {
+        const raw = fs.readFileSync(procCmdline);
+        const argv = raw
+          .toString("utf-8")
+          .split("\0")
+          .filter((part) => part.length > 0);
+        if (argv.length > 0) {
+          return argvMatchesTray(argv, targetScript) ? "match" : "mismatch";
+        }
+      } catch {
+        // Fall through to ps probe
+      }
+    }
+
+    // On macOS / BSD, query `comm=` for exact interpreter (handles spaces in exe path)
+    // and `args=` for space-safe script path verification
+    const commProbe = spawnSync("ps", ["-p", String(pid), "-o", "comm="], {
       encoding: "utf-8",
       timeout: 3000,
     });
-    if (probe.error || probe.status !== 0 || typeof probe.stdout !== "string") {
+    const argsProbe = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
+      encoding: "utf-8",
+      timeout: 3000,
+    });
+    if (
+      commProbe.error ||
+      commProbe.status !== 0 ||
+      typeof commProbe.stdout !== "string" ||
+      argsProbe.error ||
+      argsProbe.status !== 0 ||
+      typeof argsProbe.stdout !== "string"
+    ) {
       return "unknown";
     }
-    return commandLineMatchesTray(probe.stdout, targetScript)
+    return commandLineMatchesTray(argsProbe.stdout, targetScript, commProbe.stdout)
       ? "match"
       : "mismatch";
   } catch {
@@ -447,10 +525,15 @@ async function main(): Promise<void> {
   const background = args.includes("-d") || args.includes("--background");
 
   if (background) {
-    const readyFile = path.join(
-      os.tmpdir(),
-      `local-voice-mcp-tray-ready-${process.pid}-${Date.now()}`
+    const readyDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "local-voice-mcp-tray-")
     );
+    try {
+      fs.chmodSync(readyDir, 0o700);
+    } catch {
+      // Best-effort permission hardening (no-op on Windows)
+    }
+    const readyFile = path.join(readyDir, "ready");
     const pyArgs = [
       scriptPath,
       "--ready-file",
@@ -466,7 +549,33 @@ async function main(): Promise<void> {
     type StartupOutcome = "started" | "already_running";
     const startupTimeoutMs = force ? 15000 : 10000;
 
+    const terminateHungChild = async (): Promise<void> => {
+      if (!child.pid || !isPidRunning(child.pid)) {
+        return;
+      }
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        return;
+      }
+      const stopDeadline = Date.now() + 2000;
+      while (Date.now() < stopDeadline) {
+        if (!isPidRunning(child.pid)) {
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (isPidRunning(child.pid)) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Ignore if already exited
+        }
+      }
+    };
+
     let outcome: StartupOutcome;
+    let timedOut = false;
     try {
       outcome = await new Promise<StartupOutcome>((resolve, reject) => {
         let settled = false;
@@ -504,12 +613,22 @@ async function main(): Promise<void> {
         };
 
         const pollTimer = setInterval(() => {
-          if (fs.existsSync(readyFile)) {
-            done(undefined, "started");
+          if (!fs.existsSync(readyFile)) {
+            return;
+          }
+          try {
+            const rawPid = fs.readFileSync(readyFile, "utf-8").trim();
+            const markerPid = parseInt(rawPid, 10);
+            if (child.pid && markerPid === child.pid) {
+              done(undefined, "started");
+            }
+          } catch {
+            // Marker may still be flushing; retry next poll
           }
         }, 100);
 
         const timeoutTimer = setTimeout(() => {
+          timedOut = true;
           done(
             new Error(
               `Timed out after ${startupTimeoutMs / 1000}s waiting for Local Voice MCP tray to initialize.`
@@ -520,11 +639,14 @@ async function main(): Promise<void> {
         child.on("error", onError);
         child.on("exit", onExit);
       });
+    } catch (err) {
+      if (timedOut) {
+        await terminateHungChild();
+      }
+      throw err;
     } finally {
       try {
-        if (fs.existsSync(readyFile)) {
-          fs.unlinkSync(readyFile);
-        }
+        fs.rmSync(readyDir, { recursive: true, force: true });
       } catch {
         // Ignore cleanup errors
       }

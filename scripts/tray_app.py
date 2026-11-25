@@ -103,29 +103,65 @@ def _normalize_path_for_compare(p: str) -> str:
     return os.path.normcase(resolved)
 
 
-def _command_line_matches_tray(cmdline: str, expected_script_path: str | None) -> bool:
-    """Verify argv[0] is a Python interpreter and an argument matches the tray script path."""
-    if not cmdline or not cmdline.strip():
+def _argv_matches_tray(argv: list[str], expected_script_path: str | None) -> bool:
+    """Verify exact argv tokens represent a Python interpreter running the tray script."""
+    if len(argv) < 2:
         return False
-    try:
-        tokens = shlex.split(cmdline, posix=(sys.platform != "win32"))
-    except ValueError:
-        tokens = cmdline.split()
-    if len(tokens) < 2:
-        return False
-
-    exe_name = os.path.basename(tokens[0].strip('"').strip("'"))
+    exe_name = os.path.basename(argv[0].strip('"').strip("'"))
     if not PYTHON_BIN_PATTERN.match(exe_name):
         return False
 
     expected_norm = _normalize_path_for_compare(expected_script_path or SCRIPT_REALPATH)
-    for token in tokens[1:]:
+    for token in argv[1:]:
         cleaned = token.strip('"').strip("'")
         if not cleaned or cleaned.startswith("-"):
             continue
         if _normalize_path_for_compare(cleaned) == expected_norm:
             return True
     return False
+
+
+def _raw_args_contains_script_path(raw_args: str, expected_script_path: str | None) -> bool:
+    """
+    Space-safe check against unquoted POSIX `ps -o args=` output.
+    Matches the full expected script path (or its realpath) bounded by whitespace/EOL.
+    """
+    if not raw_args:
+        return False
+    candidates = {SCRIPT_REALPATH, os.path.abspath(__file__)}
+    if expected_script_path:
+        candidates.add(expected_script_path)
+        candidates.add(os.path.realpath(expected_script_path))
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        pattern = r"(?:^|\s)" + re.escape(candidate) + r"(?:\s|$)"
+        if re.search(pattern, raw_args):
+            return True
+    return False
+
+
+def _command_line_matches_tray(
+    cmdline: str, expected_script_path: str | None, comm: str | None = None
+) -> bool:
+    """Verify interpreter + script path, preserving paths that contain spaces."""
+    if not cmdline or not cmdline.strip():
+        return False
+
+    # If comm (exact executable path/name) is provided (macOS/POSIX `ps -o comm=`),
+    # validate the interpreter via comm and match the script path without splitting on spaces.
+    if comm is not None:
+        exe_name = os.path.basename(comm.strip())
+        if not PYTHON_BIN_PATTERN.match(exe_name):
+            return False
+        return _raw_args_contains_script_path(cmdline, expected_script_path)
+
+    try:
+        tokens = shlex.split(cmdline, posix=(sys.platform != "win32"))
+    except ValueError:
+        tokens = cmdline.split()
+    return _argv_matches_tray(tokens, expected_script_path)
 
 
 def is_tray_process(pid: int, expected_script_path: str | None = None) -> bool:
@@ -152,16 +188,43 @@ def is_tray_process(pid: int, expected_script_path: str | None = None) -> bool:
                 return False
             return _command_line_matches_tray(result.stdout or "", expected_script_path)
 
-        result = subprocess.run(
+        # On Linux, /proc/<pid>/cmdline provides exact NUL-separated argv tokens (handles spaces)
+        proc_cmdline = f"/proc/{int(pid)}/cmdline"
+        if os.path.exists(proc_cmdline):
+            try:
+                with open(proc_cmdline, "rb") as f:
+                    raw = f.read()
+                argv = [
+                    part.decode("utf-8", errors="replace")
+                    for part in raw.split(b"\x00")
+                    if part
+                ]
+                if argv:
+                    return _argv_matches_tray(argv, expected_script_path)
+            except OSError:
+                pass
+
+        # On macOS / BSD, query `comm=` for exact interpreter (preserves spaces in exe path)
+        # and `args=` for space-safe script path verification
+        comm_res = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        args_res = subprocess.run(
             ["ps", "-p", str(int(pid)), "-o", "args="],
             capture_output=True,
             text=True,
             timeout=3,
             check=False,
         )
-        if result.returncode != 0:
+        if comm_res.returncode != 0 or args_res.returncode != 0:
             return False
-        return _command_line_matches_tray(result.stdout or "", expected_script_path)
+        return _command_line_matches_tray(
+            args_res.stdout or "", expected_script_path, comm=comm_res.stdout or ""
+        )
     except Exception:
         return False
 
@@ -446,7 +509,11 @@ def write_ready_marker(ready_file: str | None) -> None:
     if not ready_file:
         return
     try:
-        with open(ready_file, "w", encoding="utf-8") as f:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(ready_file, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(f"{os.getpid()}\n")
     except OSError:
         pass

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
+### Added
+
+- **Cross-Platform System Tray & CLI (`local-voice-mcp-tray`)**: Menu bar / system tray controller supporting macOS, Windows, and Linux/Ubuntu (`scripts/tray_app.py`, `src/tray-cli.ts`)
+  - Manual **Quiet Mode** toggle and **Disable Temporarily** presets (15m, 30m, 1h, 2h, and Resume Now)
+  - Live **Playback Volume** presets (`25%`, `50%`, `75%`, `100%`, or default) and **Chatterbox Voice** toggle (Female / Male / Default)
+  - Automatic Python dependency installation (`pystray`, `Pillow`), macOS Dock icon hiding (`NSApplicationActivationPolicyAccessory`), atomic OS file locking, PID identity verification, and readiness handshake
+  - CLI subcommands: `--background`, `--status`, `--quiet on|off`, `--volume <0-100|default>`, `--stop`, and `--force`
+  - Optional `ENABLE_TRAY=true` auto-start from `local-voice-mcp-server`
+- **Shared User Configuration (`~/.local-voice-mcp/config.json`)**: Cross-platform config loader (`src/utils/user-config.ts`) supporting `LOCAL_VOICE_MCP_CONFIG` with `~` expansion, strict calendar date validation, and read-modify-write preservation of custom keys
+- **macOS System Mute Check**: Automatically skips `play_audio` playback when macOS system audio is muted (with 2-second `osascript` timeout)
+- **Agent Skill (`skills/local-voice-mcp/SKILL.md`)**: Bundled skill teaching AI coding agents how to synthesize speech, respect Quiet Mode/volume settings, and troubleshoot `local-voice-mcp`
+
+### Changed
+
+- Added `local-voice-mcp` bin alias alongside `local-voice-mcp-server` and `local-voice-mcp-tray` to preserve `npx -y @codecraftersllc/local-voice-mcp` execution
+- Updated `tts_status` response to include playback Quiet Mode, snooze, volume, and config file info
+- Updated `synthesize_text` to enforce engine-specific character limits (`CHATTERBOX_MAX_CHARACTERS=2000`, `KOKORO_MAX_CHARACTERS=5000`)
+- Updated `build` script to set executable permissions (`0755`) cross-platform on built CLI entrypoints
+
 ## [0.3.0] - 2026-01-05
 
 ### Added
