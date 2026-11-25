@@ -840,6 +840,11 @@ async function main(): Promise<void> {
               done(undefined, { outcome: "already_running" });
               return;
             }
+            if (raw.startsWith("error:")) {
+              const message = raw.slice(6).trim() || "Tray startup failed.";
+              done(new Error(message));
+              return;
+            }
             const readyPrefix = raw.startsWith("ready:") ? raw.slice(6) : raw;
             const markerPid = parseInt(readyPrefix, 10);
             const isValidReadyPid =

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import atexit
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 import re
@@ -56,6 +57,7 @@ DEFAULT_CONFIG = {
 
 # Keep lock file handle open for the process lifetime so the OS releases it automatically on exit
 _lock_file_handle = None
+_last_lock_error: str | None = None
 
 
 def ensure_config_dir():
@@ -336,8 +338,10 @@ def _try_acquire_os_lock() -> tuple[str, object]:
         return "locked", None
     except OSError as exc:
         handle.close()
-        if sys.platform == "win32" and exc.errno in (13, 36):
-            # EACCES / EDEADLK from msvcrt.locking indicates an active lock
+        if sys.platform == "win32":
+            if exc.errno in (errno.EACCES, errno.EDEADLK):
+                return "locked", None
+        elif exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
             return "locked", None
         return "error", exc
 
@@ -372,14 +376,15 @@ def acquire_single_instance_lock(force: bool = False) -> str:
       - "timeout": force=True failed to replace the existing instance before deadline
       - "error": filesystem or permission error prevented accessing the lock file
     """
-    global _lock_file_handle
+    global _lock_file_handle, _last_lock_error
+    _last_lock_error = None
 
     status, handle_or_err = _try_acquire_os_lock()
     if status == "error":
-        print(
-            f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {handle_or_err}",
-            file=sys.stderr,
+        _last_lock_error = (
+            f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {handle_or_err}"
         )
+        print(_last_lock_error, file=sys.stderr)
         return "error"
 
     handle = handle_or_err if status == "acquired" else None
@@ -404,17 +409,17 @@ def acquire_single_instance_lock(force: bool = False) -> str:
                 handle = retry_val
                 break
             if retry_status == "error":
-                print(
-                    f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {retry_val}",
-                    file=sys.stderr,
+                _last_lock_error = (
+                    f"Cannot acquire Local Voice MCP tray lock at {LOCK_FILE}: {retry_val}"
                 )
+                print(_last_lock_error, file=sys.stderr)
                 return "error"
 
         if handle is None:
-            print(
-                "Timed out waiting for existing Local Voice MCP tray instance to exit.",
-                file=sys.stderr,
+            _last_lock_error = (
+                "Timed out waiting for existing Local Voice MCP tray instance to exit."
             )
+            print(_last_lock_error, file=sys.stderr)
             return "timeout"
 
     _lock_file_handle = handle
@@ -956,6 +961,8 @@ def main():
         write_ready_marker(ready_file, "already_running\n")
         sys.exit(0)
     if lock_result != "acquired":
+        detail = _last_lock_error or f"Failed to acquire tray lock ({lock_result})."
+        write_ready_marker(ready_file, f"error:{detail}\n")
         sys.exit(1)
 
     load_config()
