@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "child_process";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -354,7 +355,107 @@ async function stopTrayProcess(
 }
 
 function getConfigLockPath(): string {
-  return path.join(path.dirname(getUserConfigPath()), "config.lock");
+  return `${getUserConfigPath()}.lock`;
+}
+
+function readConfigLockOwner(
+  lockPath: string
+): { pid: number | null; token: string | null } {
+  try {
+    const data = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    if (!data || typeof data !== "object") {
+      return { pid: null, token: null };
+    }
+    const pid =
+      typeof data.pid === "number" && Number.isInteger(data.pid) && data.pid > 0
+        ? data.pid
+        : null;
+    const token =
+      typeof data.token === "string" && data.token.length > 0
+        ? data.token
+        : null;
+    return { pid, token };
+  } catch {
+    return { pid: null, token: null };
+  }
+}
+
+function isConfigLockReclaimable(
+  lockPath: string,
+  staleAfterMs: number
+): { reclaimable: boolean; pid: number | null; token: string | null } {
+  const { pid, token } = readConfigLockOwner(lockPath);
+  if (pid !== null && token !== null) {
+    // Only reclaim a well-formed lock when its owner PID is definitively dead
+    return { reclaimable: !isPidRunning(pid), pid, token };
+  }
+  // Unparseable/incomplete lock file (e.g. crash mid-write): reclaim only once aged out
+  try {
+    const stat = fs.statSync(lockPath);
+    return {
+      reclaimable: Date.now() - stat.mtimeMs > staleAfterMs,
+      pid: null,
+      token: null,
+    };
+  } catch {
+    return { reclaimable: false, pid: null, token: null };
+  }
+}
+
+function tryReclaimStaleConfigLock(
+  lockPath: string,
+  staleAfterMs: number
+): boolean {
+  const initial = isConfigLockReclaimable(lockPath, staleAfterMs);
+  if (!initial.reclaimable) {
+    return false;
+  }
+
+  const reclaimGuard = `${lockPath}.reclaim`;
+  let guardFd: number;
+  try {
+    guardFd = fs.openSync(reclaimGuard, "wx", 0o600);
+  } catch (err: any) {
+    if (err && err.code === "EEXIST") {
+      try {
+        const stat = fs.statSync(reclaimGuard);
+        if (Date.now() - stat.mtimeMs > staleAfterMs) {
+          fs.unlinkSync(reclaimGuard);
+        }
+      } catch {
+        // Ignore concurrent cleanup
+      }
+    }
+    return false;
+  }
+
+  try {
+    const current = isConfigLockReclaimable(lockPath, staleAfterMs);
+    if (
+      current.reclaimable &&
+      current.pid === initial.pid &&
+      current.token === initial.token
+    ) {
+      try {
+        fs.unlinkSync(lockPath);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  } finally {
+    try {
+      fs.closeSync(guardFd);
+    } catch {
+      // Ignore close errors
+    }
+    try {
+      fs.unlinkSync(reclaimGuard);
+    } catch {
+      // Ignore unlink errors
+    }
+  }
 }
 
 async function withConfigLock<T>(
@@ -369,22 +470,33 @@ async function withConfigLock<T>(
   }
 
   const deadline = Date.now() + timeoutMs;
+  const token = crypto.randomBytes(16).toString("hex");
+  const payload = JSON.stringify({ pid: process.pid, token }) + "\n";
   let fd: number | null = null;
 
   while (fd === null) {
     try {
-      fd = fs.openSync(lockPath, "wx", 0o600);
-      fs.writeSync(fd, `${process.pid}\n`);
+      const lockFd = fs.openSync(lockPath, "wx", 0o600);
+      try {
+        fs.writeSync(lockFd, payload);
+      } catch (writeErr) {
+        try {
+          fs.closeSync(lockFd);
+        } catch {
+          // Ignore close errors
+        }
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // Ignore unlink errors
+        }
+        throw writeErr;
+      }
+      fd = lockFd;
     } catch (err: any) {
       if (err && err.code === "EEXIST") {
-        try {
-          const stat = fs.statSync(lockPath);
-          if (Date.now() - stat.mtimeMs > staleAfterMs) {
-            fs.unlinkSync(lockPath);
-            continue;
-          }
-        } catch {
-          // Lock disappeared concurrently; retry
+        if (tryReclaimStaleConfigLock(lockPath, staleAfterMs)) {
+          continue;
         }
         if (Date.now() >= deadline) {
           throw new Error(`Timed out waiting for config lock at ${lockPath}`);
@@ -404,10 +516,13 @@ async function withConfigLock<T>(
     } catch {
       // Ignore close errors
     }
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      // Ignore unlink errors
+    const { token: currentToken } = readConfigLockOwner(lockPath);
+    if (currentToken === token) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // Ignore unlink errors
+      }
     }
   }
 }
@@ -606,11 +721,10 @@ async function main(): Promise<void> {
   const force = args.includes("--force");
   const initialProbe = probeRunningTray();
   if (initialProbe.status === "unknown") {
-    throw new Error(
-      `Could not verify whether live PID ${initialProbe.info.pid} is the Local Voice MCP tray.`
+    console.error(
+      `Warning: could not verify whether PID ${initialProbe.info.pid} is the Local Voice MCP tray; falling back to the single-instance lock.`
     );
-  }
-  if (initialProbe.status === "running") {
+  } else if (initialProbe.status === "running") {
     const existingInfo = initialProbe.info;
     if (!force) {
       console.log(
@@ -728,11 +842,13 @@ async function main(): Promise<void> {
             }
             const readyPrefix = raw.startsWith("ready:") ? raw.slice(6) : raw;
             const markerPid = parseInt(readyPrefix, 10);
-            if (
+            const isValidReadyPid =
               Number.isInteger(markerPid) &&
               markerPid > 0 &&
-              (markerPid === child.pid || isPidRunning(markerPid))
-            ) {
+              (markerPid === child.pid
+                ? child.exitCode === null && child.signalCode === null
+                : isPidRunning(markerPid));
+            if (isValidReadyPid) {
               done(undefined, { outcome: "started", pid: markerPid });
             }
           } catch {

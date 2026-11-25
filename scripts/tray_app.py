@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 
 # Hide macOS Dock icon before initializing GUI event loop so this acts as a pure menu bar app
 if sys.platform == "darwin":
@@ -42,7 +43,7 @@ else:
 
 PID_FILE = os.path.join(CONFIG_DIR, "tray.pid")
 LOCK_FILE = os.path.join(CONFIG_DIR, "tray.lock")
-CONFIG_LOCK_FILE = os.path.join(CONFIG_DIR, "config.lock")
+CONFIG_LOCK_FILE = f"{CONFIG_FILE}.lock"
 SCRIPT_REALPATH = os.path.realpath(__file__)
 PYTHON_BIN_PATTERN = re.compile(r"^(python(\d+(\.\d+)*)?w?|py)(\.exe)?$", re.IGNORECASE)
 
@@ -425,10 +426,8 @@ def load_config_strict() -> dict:
 
 
 def load_config() -> dict:
-    """Forgiving config reader for status display and icon rendering."""
-    ensure_config_dir()
+    """Forgiving read-only config reader for status display and icon rendering."""
     if not os.path.exists(CONFIG_FILE):
-        save_config(dict(DEFAULT_CONFIG))
         return dict(DEFAULT_CONFIG)
     try:
         return load_config_strict()
@@ -453,10 +452,91 @@ def save_config(config: dict) -> None:
                 pass
 
 
-def acquire_config_lock(timeout_s: float = 5.0, stale_after_s: float = 15.0) -> int:
+def _read_config_lock_owner(lock_path: str) -> tuple[int | None, str | None]:
+    try:
+        with open(lock_path, "r", encoding="utf-8") as f:
+            data = json.loads(f.read())
+        if not isinstance(data, dict):
+            return None, None
+        pid = data.get("pid")
+        token = data.get("token")
+        return (
+            pid if isinstance(pid, int) and pid > 0 else None,
+            token if isinstance(token, str) and token else None,
+        )
+    except (OSError, ValueError):
+        return None, None
+
+
+def _is_config_lock_reclaimable(
+    lock_path: str, stale_after_s: float
+) -> tuple[bool, int | None, str | None]:
+    pid, token = _read_config_lock_owner(lock_path)
+    if pid is not None and token is not None:
+        # Only reclaim a well-formed lock when its owner PID is definitively dead
+        return (not is_pid_running(pid)), pid, token
+    # Unparseable/incomplete lock file (e.g. crash mid-write): reclaim only once aged out
+    try:
+        age = time.time() - os.path.getmtime(lock_path)
+        return age > stale_after_s, None, None
+    except OSError:
+        return False, None, None
+
+
+def _try_reclaim_stale_config_lock(lock_path: str, stale_after_s: float) -> bool:
+    reclaimable, orig_pid, orig_token = _is_config_lock_reclaimable(
+        lock_path, stale_after_s
+    )
+    if not reclaimable:
+        return False
+
+    reclaim_guard = f"{lock_path}.reclaim"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    guard_fd = None
+    try:
+        guard_fd = os.open(reclaim_guard, flags, 0o600)
+    except FileExistsError:
+        try:
+            if time.time() - os.path.getmtime(reclaim_guard) > stale_after_s:
+                os.remove(reclaim_guard)
+        except OSError:
+            pass
+        return False
+    except OSError:
+        return False
+
+    try:
+        # Re-verify lock identity while holding the exclusive reclaim guard
+        still_reclaimable, cur_pid, cur_token = _is_config_lock_reclaimable(
+            lock_path, stale_after_s
+        )
+        if still_reclaimable and cur_pid == orig_pid and cur_token == orig_token:
+            try:
+                os.remove(lock_path)
+                return True
+            except OSError:
+                return False
+        return False
+    finally:
+        try:
+            os.close(guard_fd)
+        except OSError:
+            pass
+        try:
+            os.remove(reclaim_guard)
+        except OSError:
+            pass
+
+
+def acquire_config_lock(
+    timeout_s: float = 5.0, stale_after_s: float = 15.0
+) -> tuple[int, str]:
     """
-    Acquire a cross-language exclusive lockfile (shared with Node tray-cli.ts)
-    to serialize read-modify-write updates to config.json.
+    Acquire a cross-language ownership-verified exclusive lockfile (shared with Node
+    tray-cli.ts) to serialize read-modify-write updates to config.json.
     """
     ensure_config_dir()
     deadline = time.monotonic() + timeout_s
@@ -464,19 +544,28 @@ def acquire_config_lock(timeout_s: float = 5.0, stale_after_s: float = 15.0) -> 
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
 
+    token = uuid.uuid4().hex
+    payload = json.dumps({"pid": os.getpid(), "token": token}).encode("utf-8") + b"\n"
+
     while True:
         try:
             fd = os.open(CONFIG_LOCK_FILE, flags, 0o600)
-            os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
-            return fd
-        except FileExistsError:
             try:
-                age = time.time() - os.path.getmtime(CONFIG_LOCK_FILE)
-                if age > stale_after_s:
-                    os.remove(CONFIG_LOCK_FILE)
-                    continue
+                os.write(fd, payload)
             except OSError:
-                pass
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                try:
+                    os.remove(CONFIG_LOCK_FILE)
+                except OSError:
+                    pass
+                raise
+            return fd, token
+        except FileExistsError:
+            if _try_reclaim_stale_config_lock(CONFIG_LOCK_FILE, stale_after_s):
+                continue
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"Timed out waiting for config lock at {CONFIG_LOCK_FILE}"
@@ -484,15 +573,29 @@ def acquire_config_lock(timeout_s: float = 5.0, stale_after_s: float = 15.0) -> 
             time.sleep(0.05)
 
 
-def release_config_lock(fd: int) -> None:
+def release_config_lock(fd: int, token: str) -> None:
     try:
         os.close(fd)
     except OSError:
         pass
+    _, current_token = _read_config_lock_owner(CONFIG_LOCK_FILE)
+    if current_token == token:
+        try:
+            os.remove(CONFIG_LOCK_FILE)
+        except OSError:
+            pass
+
+
+def ensure_config_file_exists() -> None:
+    """Create default config.json under the shared config lock if it does not yet exist."""
+    lock_info = None
     try:
-        os.remove(CONFIG_LOCK_FILE)
-    except OSError:
-        pass
+        lock_info = acquire_config_lock()
+        if not os.path.exists(CONFIG_FILE):
+            save_config(dict(DEFAULT_CONFIG))
+    finally:
+        if lock_info is not None:
+            release_config_lock(lock_info[0], lock_info[1])
 
 
 def parse_iso_utc(value) -> datetime | None:
@@ -582,9 +685,9 @@ def build_tray_app(ready_file: str | None = None):
         icon_obj.update_menu()
 
     def update_config(icon_obj, mutator):
-        lock_fd = None
+        lock_info = None
         try:
-            lock_fd = acquire_config_lock()
+            lock_info = acquire_config_lock()
             cfg = load_config_strict()
             mutator(cfg)
             save_config(cfg)
@@ -595,8 +698,8 @@ def build_tray_app(ready_file: str | None = None):
             )
             return
         finally:
-            if lock_fd is not None:
-                release_config_lock(lock_fd)
+            if lock_info is not None:
+                release_config_lock(lock_info[0], lock_info[1])
         refresh_icon(icon_obj, cfg)
 
     def toggle_quiet_mode(icon_obj, _item):
@@ -666,9 +769,8 @@ def build_tray_app(ready_file: str | None = None):
         return "Status: Audio Active"
 
     def open_config_file(_icon_obj, _item):
-        if not os.path.exists(CONFIG_FILE):
-            save_config(dict(DEFAULT_CONFIG))
         try:
+            ensure_config_file_exists()
             if sys.platform == "darwin":
                 subprocess.Popen(["open", CONFIG_FILE])
             elif sys.platform == "win32":
