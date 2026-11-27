@@ -1,10 +1,12 @@
 {
   "name": "@codecraftersllc/local-voice-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main": "dist/server.js",
   "mcpName": "io.github.CodeCraftersLLC/local-voice-mcp",
   "bin": {
-    "local-voice-mcp-server": "./dist/mcp-server.js"
+    "local-voice-mcp": "./dist/mcp-server.js",
+    "local-voice-mcp-server": "./dist/mcp-server.js",
+    "local-voice-mcp-tray": "./dist/tray-cli.js"
   },
   "author": "soyboyscout",
   "repository": {
@@ -16,8 +18,10 @@
   },
   "homepage": "https://github.com/CodeCraftersLLC/local-voice-mcp#readme",
   "scripts": {
-    "test": "npx jest",
-    "build": "tsc",
+    "test": "npx jest && npm run test:python",
+    "test:python": "node -e \"const {spawnSync}=require('child_process');const cands=[process.env.TRAY_PYTHON_PATH,process.env.PYTHON_PATH,...(process.platform==='win32'?['python','py','python3']:['python3','python'])].filter(Boolean);const py=cands.find(c=>{const r=spawnSync(c,['--version'],{stdio:'ignore'});return !r.error&&r.status===0;});if(!py){console.error('Python not found');process.exit(1);}const r=spawnSync(py,['-B','-m','unittest','discover','-s','tests/scripts','-v'],{stdio:'inherit'});process.exit(r.status??1);\"",
+    "build": "tsc && node -e \"const fs=require('fs');['dist/mcp-server.js','dist/tray-cli.js'].forEach(f=>fs.existsSync(f)&&fs.chmodSync(f,0o755))\"",
+    "tray": "npm run build && node dist/tray-cli.js",
     "start": "ts-node src/server.ts",
     "start:mcp": "npm run build && node dist/mcp-server.js",
     "dev:mcp": "ts-node src/mcp-server.ts",
@@ -38,6 +42,7 @@
   "files": [
     "dist/",
     "scripts/",
+    "skills/",
     "female-reference-voice.wav"
   ],
   "publishConfig": {
