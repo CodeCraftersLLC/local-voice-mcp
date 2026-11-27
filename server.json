@@ -1,13 +1,17 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-16/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.CodeCraftersLLC/local-voice-mcp",
-  "description": "Give your MCP clients the ability to speak by running local voice models using Chatterbox TTS",
-  "version": "0.1.5",
+  "description": "Give your MCP clients local text-to-speech using Chatterbox Turbo TTS or Kokoro TTS",
+  "version": "0.4.0",
+  "repository": {
+    "url": "https://github.com/CodeCraftersLLC/local-voice-mcp",
+    "source": "github"
+  },
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@codecraftersllc/local-voice-mcp",
-      "version": "0.1.5",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       }
